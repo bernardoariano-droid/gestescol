@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  @media print {
+    @page {
+      size: A4 portrait;
+      margin: 10mm;
+    }
+    body, html, #root, .h-screen, [class*="h-screen"], [class*="overflow-hidden"] {
+      height: auto !important;
+      overflow: visible !important;
+    }
+    aside, header, .no-print {
+      display: none !important;
+    }
+    main {
+      padding: 0 !important;
+      margin: 0 !important;
+      overflow: visible !important;
+    }
+    .print-only {
+      display: block !important;
+    }
+    body {
+      background: white !important;
+    }
+    * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+  }
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased;
+  }
+}
+
+
+@layer utilities {
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
