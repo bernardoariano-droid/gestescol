@@ -1,3 +1,6 @@
+export type SubscriptionPlan = 'Mensal' | 'Trimestral' | 'Anual';
+export type SubscriptionStatus = 'Activa' | 'Expirada' | 'Pendente';
+
 export type School = {
   id: string;
   name: string;
@@ -13,6 +16,13 @@ export type School = {
   administracaoMunicipal?: string;
   direccaoMunicipal?: string;
   anoLectivo?: string;
+  logoBase64?: string;
+  subscription?: {
+    plan: SubscriptionPlan;
+    status: SubscriptionStatus;
+    startDate: string;
+    endDate: string;
+  };
 };
 
 export type Student = {
@@ -53,7 +63,7 @@ export type Grade = {
   studentId: string;
   subjectId: string;
   period: '1º Trimestre' | '2º Trimestre' | '3º Trimestre' | 'Exame';
-  type: 'MAC' | 'NPT';
+  type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3';
   value: number;
   schoolId?: string;
 };
@@ -64,6 +74,8 @@ export type Payment = {
   month?: string; // e.g., "Janeiro", "Fevereiro"
   service: string; // e.g., "Propina", "Uniforme", "Transporte"
   amount: number;
+  fine?: number;
+  discount?: number;
   date: string;
   status: 'Pago' | 'Pendente' | 'Atrasado';
   receiptNumber: string;
@@ -91,14 +103,14 @@ export type CertificateTemplate = {
   backgroundImage: string; // base64
   fields: {
     id: string;
-    type: 'studentName' | 'className' | 'level' | 'date' | 'custom';
+    type: 'studentName' | 'className' | 'level' | 'date' | 'custom' | 'gradeSubject' | 'gradeAverage' | 'gradeResult';
     label: string;
     x: number; // percentage 0-100
     y: number; // percentage 0-100
     fontSize: number;
     fontWeight: string;
     color: string;
-    text?: string; // for custom type
+    text?: string; // for custom type or subject name for gradeSubject
   }[];
   schoolId?: string;
 };
@@ -114,6 +126,7 @@ export type SystemUser = {
   schoolId?: string;
   assignedClassIds?: string[];
   avatarUrl?: string;
+  studentId?: string;
 };
 
 export type Expense = {
@@ -125,3 +138,29 @@ export type Expense = {
   receiptNumber?: string;
   schoolId?: string;
 };
+
+export type Announcement = {
+  id: string;
+  title: string;
+  content: string;
+  date: string;
+  senderId: string;
+  senderName: string;
+  senderRole: string;
+  targetAudience: 'all_admins' | 'school_users' | 'specific_users' | 'specific_role';
+  targetUserIds?: string[];
+  targetRole?: string;
+  schoolId?: string;
+};
+
+export type AuditLog = {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userRole: string;
+  action: string;
+  timestamp: string;
+  details?: string;
+};
+

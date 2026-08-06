@@ -88,36 +88,47 @@ export function ImportStudentsModal({ classes, existingStudents, onImport, onClo
       let hasRowError = false;
 
       if (!nome) { newErrors.push(`Linha ${rowNum}: Nome Completo é obrigatório.`); hasRowError = true; }
-      if (!bi) { newErrors.push(`Linha ${rowNum}: BI é obrigatório.`); hasRowError = true; }
-      if (!dataNasc) { newErrors.push(`Linha ${rowNum}: Data de Nascimento é obrigatória.`); hasRowError = true; }
       
       let classId = '';
       if (turma) {
-        const foundClass = classes.find(c => c.name.toLowerCase() === turma.toString().toLowerCase());
+        const normalize = (n: string) => 
+          n.toString().toLowerCase()
+            .replace(/\s+/g, '')
+            .replace(/classe/g, '')
+            .replace(/[ªº]/g, '')
+            .trim();
+        
+        const normT = normalize(turma.toString());
+        const foundClass = classes.find(c => {
+          const normC = normalize(c.name);
+          return normC === normT || normC.includes(normT) || normT.includes(normC);
+        });
+
         if (!foundClass) {
-          newErrors.push(`Linha ${rowNum}: Turma "${turma}" não encontrada no sistema.`);
-          hasRowError = true;
+          // Instead of returning an error, we mark it to be created dynamically!
+          classId = 'new_' + turma.toString().trim();
         } else {
           classId = foundClass.id;
         }
       }
 
-      if (bi) {
-        if (seenBI.has(bi)) {
-          newErrors.push(`Linha ${rowNum}: BI "${bi}" está duplicado na planilha.`);
+      if (bi && bi.toString().trim() !== '') {
+        const biStr = bi.toString().trim();
+        if (seenBI.has(biStr)) {
+          newErrors.push(`Linha ${rowNum}: BI "${biStr}" está duplicado na planilha.`);
           hasRowError = true;
-        } else if (existingStudents.some(s => s.bi === bi)) {
-          newErrors.push(`Linha ${rowNum}: BI "${bi}" já existe no sistema.`);
+        } else if (existingStudents.some(s => s.bi === biStr)) {
+          newErrors.push(`Linha ${rowNum}: BI "${biStr}" já existe no sistema.`);
           hasRowError = true;
         }
-        if (!hasRowError) seenBI.add(bi);
+        if (!hasRowError) seenBI.add(biStr);
       }
 
       if (!hasRowError) {
         validData.push({
           _rowNum: rowNum,
           name: nome || '',
-          bi: bi || '',
+          bi: bi ? bi.toString().trim() : '',
           birthDate: dataNasc || '',
           gender: genero === 'F' ? 'F' : 'M',
           guardianName: encarregado || '',
@@ -214,12 +225,21 @@ export function ImportStudentsModal({ classes, existingStudents, onImport, onClo
         <div className="p-6 flex-1 overflow-y-auto space-y-6">
           <div className="flex items-start gap-4 p-4 bg-blue-50 text-blue-800 rounded-xl">
             <FileDown size={24} className="shrink-0 mt-1" />
-            <div>
+            <div className="flex-1">
               <h4 className="font-bold mb-1">Passo 1: Baixe o modelo</h4>
               <p className="text-sm mb-3 opacity-80">Use a nossa planilha de modelo para garantir que os dados estejam no formato correto.</p>
               <button onClick={downloadTemplate} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors">
                 Baixar Modelo .xlsx
               </button>
+              
+              <div className="mt-4 p-3.5 bg-white/70 rounded-xl border border-blue-200/50 text-xs text-blue-900 space-y-1">
+                <span className="font-black uppercase tracking-wide text-[10px] text-blue-800 block">Dica de Importação Flexível:</span>
+                <p>
+                  Apenas a coluna <strong>"Nome Completo"</strong> é obrigatória para a importação. Pode deixar o <strong>BI</strong>, 
+                  <strong>Data de Nascimento</strong>, <strong>Gênero</strong> e dados do Encarregado em branco se desejar inseri-los mais tarde 
+                  pelo perfil de cada aluno.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -271,10 +291,18 @@ export function ImportStudentsModal({ classes, existingStudents, onImport, onClo
                   <tbody className="divide-y divide-neutral-100">
                     {previewData.slice(0, 10).map((row, idx) => (
                       <tr key={idx} className="bg-white hover:bg-neutral-50">
-                        <td className="px-4 py-3">{row.name}</td>
-                        <td className="px-4 py-3">{row.bi}</td>
-                        <td className="px-4 py-3">{row.turmaName || 'N/A'}</td>
-                        <td className="px-4 py-3">{row.gender}</td>
+                        <td className="px-4 py-3 font-bold text-neutral-800">{row.name}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-neutral-500">{row.bi || '---'}</td>
+                        <td className="px-4 py-3">
+                          {row.classId.startsWith('new_') ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-blue-50 text-blue-700 border border-blue-100">
+                              🆕 {row.turmaName} (Auto-Criar)
+                            </span>
+                          ) : (
+                            <span className="text-neutral-700 font-medium">{row.turmaName}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-neutral-600 font-bold">{row.gender}</td>
                       </tr>
                     ))}
                   </tbody>

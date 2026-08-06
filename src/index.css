@@ -53,3 +53,173 @@
     display: none;
   }
 }
+
+:root {
+  --bg-main: #f9fafb; /* neutral-50 */
+  --bg-card: #ffffff;
+  --bg-sidebar: #ffffff;
+  --text-main: #171717; /* neutral-900 */
+  --text-muted: #737373; /* neutral-500 */
+  --border-color: #f5f5f5; /* neutral-100 */
+  --border-item: #e5e5e5; /* neutral-200 */
+  --bg-input: #f9fafb;
+}
+
+/* White Theme */
+.theme-white {
+  --bg-main: #ffffff;
+  --bg-card: #f9fafb;
+  --bg-sidebar: #f3f4f6;
+  --text-main: #111827;
+  --text-muted: #4b5563;
+  --border-color: #e5e7eb;
+  --border-item: #d1d5db;
+  --bg-input: #ffffff;
+}
+
+/* Black Theme */
+.theme-black {
+  --bg-main: #0a0a0a;
+  --bg-card: #121212;
+  --bg-sidebar: #171717;
+  --text-main: #f5f5f5;
+  --text-muted: #a3a3a3;
+  --border-color: #262626;
+  --border-item: #1f1f1f;
+  --bg-input: #1f1f1f;
+}
+
+/* Yellow Theme */
+.theme-yellow {
+  --bg-main: #fefdf0;
+  --bg-card: #fffbeb;
+  --bg-sidebar: #fef3c7;
+  --text-main: #451a03;
+  --text-muted: #78350f;
+  --border-color: #fef08a;
+  --border-item: #fde047;
+  --bg-input: #fef9c3;
+}
+
+/* Green Theme */
+.theme-green {
+  --bg-main: #f0fdf4;
+  --bg-card: #ffffff;
+  --bg-sidebar: #ecfdf5;
+  --text-main: #064e3b;
+  --text-muted: #047857;
+  --border-color: #d1fae5;
+  --border-item: #a7f3d0;
+  --bg-input: #f0fdf4;
+}
+
+/* Blue Theme */
+.theme-blue {
+  --bg-main: #f0f9ff;
+  --bg-card: #ffffff;
+  --bg-sidebar: #e0f2fe;
+  --text-main: #0c4a6e;
+  --text-muted: #0369a1;
+  --border-color: #e0f2fe;
+  --border-item: #bae6fd;
+  --bg-input: #f0f9ff;
+}
+
+/* Pink Theme */
+.theme-pink {
+  --bg-main: #fdf2f8;
+  --bg-card: #ffffff;
+  --bg-sidebar: #fce7f3;
+  --text-main: #50072b;
+  --text-muted: #9d174d;
+  --border-color: #fbcfe8;
+  --border-item: #f9a8d4;
+  --bg-input: #fdf2f8;
+}
+
+/* Apply CSS custom properties when any of these themes are set */
+html.theme-white,
+html.theme-black,
+html.theme-yellow,
+html.theme-green,
+html.theme-blue,
+html.theme-pink {
+  background-color: var(--bg-main) !important;
+}
+
+html.theme-white body, html.theme-white #root,
+html.theme-black body, html.theme-black #root,
+html.theme-yellow body, html.theme-yellow #root,
+html.theme-green body, html.theme-green #root,
+html.theme-blue body, html.theme-blue #root,
+html.theme-pink body, html.theme-pink #root {
+  background-color: var(--bg-main) !important;
+}
+
+/* Base structural overrides */
+.theme-white .bg-neutral-50, .theme-black .bg-neutral-50, .theme-yellow .bg-neutral-50, .theme-green .bg-neutral-50, .theme-blue .bg-neutral-50, .theme-pink .bg-neutral-50,
+.theme-white .bg-neutral-100, .theme-black .bg-neutral-100, .theme-yellow .bg-neutral-100, .theme-green .bg-neutral-100, .theme-blue .bg-neutral-100, .theme-pink .bg-neutral-100,
+.theme-white .bg-neutral-50\/50, .theme-black .bg-neutral-50\/50, .theme-yellow .bg-neutral-50\/50, .theme-green .bg-neutral-50\/50, .theme-blue .bg-neutral-50\/50, .theme-pink .bg-neutral-50\/50,
+.theme-white .bg-neutral-100\/80, .theme-black .bg-neutral-100\/80, .theme-yellow .bg-neutral-100\/80, .theme-green .bg-neutral-100\/80, .theme-blue .bg-neutral-100\/80, .theme-pink .bg-neutral-100\/80 {
+  background-color: var(--bg-main) !important;
+}
+
+/* Card and container overrides */
+.theme-white .bg-white, .theme-black .bg-white, .theme-yellow .bg-white, .theme-green .bg-white, .theme-blue .bg-white, .theme-pink .bg-white,
+.theme-white .bg-white\/90, .theme-black .bg-white\/90, .theme-yellow .bg-white\/90, .theme-green .bg-white\/90, .theme-blue .bg-white\/90, .theme-pink .bg-white\/90,
+.theme-white .bg-white\/80, .theme-black .bg-white\/80, .theme-yellow .bg-white\/80, .theme-green .bg-white\/80, .theme-blue .bg-white\/80, .theme-pink .bg-white\/80 {
+  background-color: var(--bg-card) !important;
+}
+
+/* Sidebar override */
+.theme-white aside, .theme-black aside, .theme-yellow aside, .theme-green aside, .theme-blue aside, .theme-pink aside {
+  background-color: var(--bg-sidebar) !important;
+  border-right: 1px solid var(--border-item) !important;
+}
+
+/* Text overrides */
+.theme-white .text-neutral-900, .theme-black .text-neutral-900, .theme-yellow .text-neutral-900, .theme-green .text-neutral-900, .theme-blue .text-neutral-900, .theme-pink .text-neutral-900,
+.theme-white .text-neutral-800, .theme-black .text-neutral-800, .theme-yellow .text-neutral-800, .theme-green .text-neutral-800, .theme-blue .text-neutral-800, .theme-pink .text-neutral-800,
+.theme-white .text-neutral-700, .theme-black .text-neutral-700, .theme-yellow .text-neutral-700, .theme-green .text-neutral-700, .theme-blue .text-neutral-700, .theme-pink .text-neutral-700,
+.theme-white .text-neutral-950, .theme-black .text-neutral-950, .theme-yellow .text-neutral-950, .theme-green .text-neutral-950, .theme-blue .text-neutral-950, .theme-pink .text-neutral-950 {
+  color: var(--text-main) !important;
+}
+
+.theme-white .text-neutral-500, .theme-black .text-neutral-500, .theme-yellow .text-neutral-500, .theme-green .text-neutral-500, .theme-blue .text-neutral-500, .theme-pink .text-neutral-500,
+.theme-white .text-neutral-600, .theme-black .text-neutral-600, .theme-yellow .text-neutral-600, .theme-green .text-neutral-600, .theme-blue .text-neutral-600, .theme-pink .text-neutral-600,
+.theme-white .text-neutral-400, .theme-black .text-neutral-400, .theme-yellow .text-neutral-400, .theme-green .text-neutral-400, .theme-blue .text-neutral-400, .theme-pink .text-neutral-400 {
+  color: var(--text-muted) !important;
+}
+
+/* Input/select backgrounds */
+.theme-white input:not([type="checkbox"]):not([type="radio"]), .theme-black input:not([type="checkbox"]):not([type="radio"]), .theme-yellow input:not([type="checkbox"]):not([type="radio"]), .theme-green input:not([type="checkbox"]):not([type="radio"]), .theme-blue input:not([type="checkbox"]):not([type="radio"]), .theme-pink input:not([type="checkbox"]):not([type="radio"]),
+.theme-white select, .theme-black select, .theme-yellow select, .theme-green select, .theme-blue select, .theme-pink select,
+.theme-white textarea, .theme-black textarea, .theme-yellow textarea, .theme-green textarea, .theme-blue textarea, .theme-pink textarea {
+  background-color: var(--bg-input) !important;
+  color: var(--text-main) !important;
+  border-color: var(--border-item) !important;
+}
+
+/* Border overrides */
+.theme-white .border-neutral-200, .theme-black .border-neutral-200, .theme-yellow .border-neutral-200, .theme-green .border-neutral-200, .theme-blue .border-neutral-200, .theme-pink .border-neutral-200,
+.theme-white .border-neutral-100, .theme-black .border-neutral-100, .theme-yellow .border-neutral-100, .theme-green .border-neutral-100, .theme-blue .border-neutral-100, .theme-pink .border-neutral-100,
+.theme-white .border-neutral-300, .theme-black .border-neutral-300, .theme-yellow .border-neutral-300, .theme-green .border-neutral-300, .theme-blue .border-neutral-300, .theme-pink .border-neutral-300 {
+  border-color: var(--border-color) !important;
+}
+
+/* Table headers and active selections */
+.theme-black .bg-neutral-50\/50, .theme-black tr.hover\:bg-neutral-50:hover {
+  background-color: #1f1f1f !important;
+}
+.theme-yellow .bg-neutral-50\/50, .theme-yellow tr.hover\:bg-neutral-50:hover {
+  background-color: #fef9c3 !important;
+}
+.theme-green .bg-neutral-50\/50, .theme-green tr.hover\:bg-neutral-50:hover {
+  background-color: #d1fae5 !important;
+}
+.theme-blue .bg-neutral-50\/50, .theme-blue tr.hover\:bg-neutral-50:hover {
+  background-color: #bae6fd !important;
+}
+.theme-pink .bg-neutral-50\/50, .theme-pink tr.hover\:bg-neutral-50:hover {
+  background-color: #fbcfe8 !important;
+}

@@ -1,0 +1,6 @@
+function PaymentModal({ students, classes, onClose, onAddPayment }: {
+  students: Student[],
+  classes: Class[],
+  onClose: () => void,
+  onAddPayment: (p: Payment) => void
+}) {

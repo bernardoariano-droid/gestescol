@@ -143,6 +143,23 @@ export function SchoolsView({
                       {admin ? `${admin.name} (${admin.email})` : 'Nenhum administrador associado'}
                     </p>
                   </div>
+                  <div>
+                    <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Assinatura</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
+                        school.subscription?.status === 'Activa' ? 'bg-emerald-100 text-emerald-700' :
+                        school.subscription?.status === 'Expirada' ? 'bg-rose-100 text-rose-700' :
+                        'bg-amber-100 text-amber-700'
+                      }`}>
+                        {school.subscription?.status || 'Não configurada'}
+                      </span>
+                      {school.subscription && (
+                        <span className="text-xs font-bold text-neutral-600">
+                          {school.subscription.plan} (Expira: {school.subscription.endDate})
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -264,7 +281,13 @@ function AddSchoolModal({ onClose, onSave, showToast }: AddSchoolModalProps) {
       governoProvincia: schoolData.governoProvincia,
       administracaoMunicipal: schoolData.administracaoMunicipal,
       direccaoMunicipal: schoolData.direccaoMunicipal,
-      anoLectivo: schoolData.anoLectivo
+      anoLectivo: schoolData.anoLectivo,
+      subscription: {
+        plan: 'Mensal',
+        status: 'Activa',
+        startDate: new Date().toISOString().split('T')[0],
+        endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      }
     };
 
     const finalAdmin: SystemUser = {
@@ -660,6 +683,93 @@ function EditSchoolModal({ school, onClose, onSave }: EditSchoolModalProps) {
                 <option value="Activo">Activo</option>
                 <option value="Inactivo">Inactivo</option>
               </select>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-neutral-100">
+            <h4 className="text-sm font-black text-neutral-900 mb-4">Plano de Assinatura (Controlo de Acesso)</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Plano</label>
+                <select 
+                  value={formData.subscription?.plan || 'Mensal'}
+                  onChange={(e) => setFormData({ 
+                    ...formData, 
+                    subscription: { 
+                      ...formData.subscription, 
+                      plan: e.target.value as any,
+                      status: formData.subscription?.status || 'Pendente',
+                      startDate: formData.subscription?.startDate || new Date().toISOString().split('T')[0],
+                      endDate: formData.subscription?.endDate || new Date().toISOString().split('T')[0]
+                    } 
+                  })}
+                  className="w-full p-3 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none"
+                >
+                  <option value="Mensal">Mensal</option>
+                  <option value="Trimestral">Trimestral</option>
+                  <option value="Anual">Anual</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Estado da Assinatura</label>
+                <select 
+                  value={formData.subscription?.status || 'Pendente'}
+                  onChange={(e) => setFormData({ 
+                    ...formData, 
+                    subscription: { 
+                      ...formData.subscription, 
+                      plan: formData.subscription?.plan || 'Mensal',
+                      startDate: formData.subscription?.startDate || new Date().toISOString().split('T')[0],
+                      endDate: formData.subscription?.endDate || new Date().toISOString().split('T')[0],
+                      status: e.target.value as any
+                    } 
+                  })}
+                  className="w-full p-3 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none"
+                >
+                  <option value="Activa">Activa</option>
+                  <option value="Expirada">Expirada</option>
+                  <option value="Pendente">Pendente</option>
+                </select>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Data de Início</label>
+                <input 
+                  type="date"
+                  value={formData.subscription?.startDate || ''}
+                  onChange={(e) => setFormData({ 
+                    ...formData, 
+                    subscription: { 
+                      ...formData.subscription, 
+                      plan: formData.subscription?.plan || 'Mensal',
+                      status: formData.subscription?.status || 'Pendente',
+                      endDate: formData.subscription?.endDate || new Date().toISOString().split('T')[0],
+                      startDate: e.target.value
+                    } 
+                  })}
+                  className="w-full p-3 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Data de Expiração</label>
+                <input 
+                  type="date"
+                  value={formData.subscription?.endDate || ''}
+                  onChange={(e) => setFormData({ 
+                    ...formData, 
+                    subscription: { 
+                      ...formData.subscription,
+                      plan: formData.subscription?.plan || 'Mensal',
+                      status: formData.subscription?.status || 'Pendente',
+                      startDate: formData.subscription?.startDate || new Date().toISOString().split('T')[0], 
+                      endDate: e.target.value
+                    } 
+                  })}
+                  className="w-full p-3 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none"
+                />
+              </div>
             </div>
           </div>
 

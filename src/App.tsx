@@ -11,6 +11,7 @@ import {
   Plus,
   Search,
   ChevronRight,
+  ChevronDown,
   GraduationCap,
   TrendingUp,
   TrendingDown,
@@ -44,11 +45,30 @@ import {
   UserCog,
   Database,
   Download,
-  School as SchoolIcon
+  School as SchoolIcon,
+  Megaphone,
+  ShieldAlert,
+  Archive,
+  Bot,
+  Sparkles,
+  History,
+  Clock,
+  Activity,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  Copy
 } from 'lucide-react';
 import { SchoolsView } from './SchoolsView';
 import { ProfileView } from './ProfileView';
 import { ImportStudentsModal } from './ImportStudentsModal';
+import { AnnouncementsView } from './AnnouncementsView';
+import { ExamsView } from './ExamsView';
+import { TransfersView } from './TransfersView';
+import { CalendarView } from './CalendarView';
+import { ArchiveView } from './ArchiveView';
+import { AiAssistantView } from './AiAssistantView';
+import { PaymentModal } from './PaymentModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -62,14 +82,18 @@ import {
   ResponsiveContainer,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  LineChart,
+  Line,
+  Legend
 } from 'recharts';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-import { Student, Class, Teacher, Payment, Grade, CertificateTemplate, TeacherAssignment, SystemUser, Expense, School } from './types';
+import { Student, Class, Teacher, Payment, Grade, CertificateTemplate, TeacherAssignment, SystemUser, Expense, School, Announcement, AuditLog } from './types';
 import { authService } from './auth';
+import { pushItemToSupabase, pushItemToSupabaseWithRetry, validateAndCleanSyncQueue, pullFromSupabase, SUPABASE_SQL_SCHEMA, testConnection, clearAllSupabaseData, performFullBackup, SUPABASE_URL, supabase } from './supabase';
 import { INITIAL_STUDENTS, INITIAL_CLASSES, INITIAL_TEACHERS, INITIAL_PAYMENTS, MONTHS, INITIAL_USERS, INITIAL_EXPENSES, INITIAL_SCHOOLS } from './constants';
 
 // Utility for tailwind classes
@@ -77,7 +101,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-type View = 'dashboard' | 'students' | 'academic' | 'finance' | 'teachers' | 'classes' | 'lists' | 'mini-pautas' | 'pauta-final' | 'boletim' | 'certificates' | 'settings' | 'users' | 'backup' | 'schools' | 'profile';
+type View = 'dashboard' | 'ai-assistant' | 'students' | 'academic' | 'finance' | 'teachers' | 'classes' | 'lists' | 'mini-pautas' | 'pauta-final' | 'boletim' | 'certificates' | 'settings' | 'users' | 'backup' | 'schools' | 'profile' | 'announcements' | 'calendar' | 'archive' | 'exams' | 'transfers' | 'audit';
 
 const LEVELS = ['Todos', '1ª Classe', '2ª Classe', '3ª Classe', '4ª Classe', '5ª Classe', '6ª Classe', '7ª Classe', '8ª Classe', '9ª Classe', '10ª Classe', '11ª Classe', '12ª Classe', 'EJA'];
 
@@ -170,7 +194,7 @@ const isExamClass = (level: string = '') => {
   return !!level.match(/6ª Classe|9ª Classe|12ª Classe/i);
 };
 
-export const calculateMT = (studentId: string, subjectId: string, period: string, getGradeFunc: (s: string, sub: string, p: string, t: 'MAC' | 'NPT') => number, level: string = '') => {
+export const calculateMT = (studentId: string, subjectId: string, period: string, getGradeFunc: (s: string, sub: string, p: string, t: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number, level: string = '') => {
   if (isExamClass(level) && period === '3º Trimestre') {
     const mt1 = calculateMT(studentId, subjectId, '1º Trimestre', getGradeFunc, level);
     const mt2 = calculateMT(studentId, subjectId, '2º Trimestre', getGradeFunc, level);
@@ -183,7 +207,7 @@ export const calculateMT = (studentId: string, subjectId: string, period: string
   return (mac + npt) / 2;
 };
 
-export const calculateAnnual = (studentId: string, subjectId: string, getGradeFunc: (s: string, sub: string, p: string, t: 'MAC' | 'NPT') => number, level: string = '') => {
+export const calculateAnnual = (studentId: string, subjectId: string, getGradeFunc: (s: string, sub: string, p: string, t: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number, level: string = '') => {
   const mt1 = calculateMT(studentId, subjectId, '1º Trimestre', getGradeFunc, level);
   const mt2 = calculateMT(studentId, subjectId, '2º Trimestre', getGradeFunc, level);
   const mt3 = calculateMT(studentId, subjectId, '3º Trimestre', getGradeFunc, level);
@@ -203,6 +227,407 @@ const getGradeScale = (level: string) => {
   return { max: 20, threshold: 10 };
 };
 
+export const generateUnifiedClassPautasPDF = (
+  selectedClass: Class,
+  classStudents: Student[],
+  getGradeFunc: (sId: string, subId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
+  schoolSettings: SchoolSettings,
+  showToast?: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void
+) => {
+  const notify = showToast || ((msg: string) => alert(msg));
+  if (!selectedClass) {
+    notify('Nenhuma turma selecionada.', 'error');
+    return;
+  }
+  if (!classStudents || classStudents.length === 0) {
+    notify('A turma selecionada não possui estudantes registados.', 'warning');
+    return;
+  }
+
+  const subjects = getSubjectsForClass(selectedClass);
+  if (subjects.length === 0) {
+    notify('Nenhuma disciplina encontrada para esta turma.', 'warning');
+    return;
+  }
+
+  try {
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const { threshold, max: maxScale } = getGradeScale(selectedClass.level || '');
+
+    // Helper for Angolan Official Document Header
+    const drawOfficialHeader = (pdf: jsPDF, title: string, subtitle?: string) => {
+      pdf.setFont("Helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(50, 50, 50);
+      pdf.text("REPÚBLICA DE ANGOLA", pageWidth / 2, 11, { align: "center" });
+      pdf.text("GOVERNO PROVINCIAL - MINISTÉRIO DA EDUCAÇÃO", pageWidth / 2, 15, { align: "center" });
+      pdf.setFontSize(11);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text((schoolSettings.nomeEscola || "INSTITUIÇÃO DE ENSINO").toUpperCase(), pageWidth / 2, 20, { align: "center" });
+
+      pdf.setDrawColor(203, 213, 225);
+      pdf.setLineWidth(0.4);
+      pdf.line(14, 23, pageWidth - 14, 23);
+
+      pdf.setFontSize(12);
+      pdf.setFont("Helvetica", "bold");
+      pdf.setTextColor(30, 58, 138);
+      pdf.text(title.toUpperCase(), pageWidth / 2, 29, { align: "center" });
+
+      if (subtitle) {
+        pdf.setFontSize(8.5);
+        pdf.setFont("Helvetica", "normal");
+        pdf.setTextColor(71, 85, 105);
+        pdf.text(subtitle, pageWidth / 2, 33.5, { align: "center" });
+      }
+
+      pdf.setFontSize(8);
+      pdf.setFont("Helvetica", "bold");
+      pdf.setTextColor(30, 41, 59);
+      pdf.text(`TURMA: ${selectedClass.name}   |   NÍVEL: ${selectedClass.level}   |   CURSO: ${selectedClass.course || 'Geral'}   |   ANO LECTIVO: ${schoolSettings.anoLectivo}`, 14, 39);
+      pdf.text(`DATA DE EMISSÃO: ${new Date().toLocaleDateString('pt-PT')}`, pageWidth - 14, 39, { align: "right" });
+
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setLineWidth(0.2);
+      pdf.line(14, 41, pageWidth - 14, 41);
+    };
+
+    // --- PAGE 1: ARQUIVO UNIFICADO / CAPA RESUMO ---
+    drawOfficialHeader(doc, "ARQUIVO UNIFICADO DE PAUTAS DE DISCIPLINAS", "Documento Consolidado para Arquivo Físico e Impresso");
+
+    // Executive summary box
+    doc.setFillColor(248, 250, 252);
+    doc.rect(14, 45, pageWidth - 28, 24, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.rect(14, 45, pageWidth - 28, 24, 'S');
+
+    doc.setFontSize(9.5);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(15, 23, 42);
+    doc.text("INFORMAÇÃO GERAL DA TURMA", 18, 51);
+
+    doc.setFontSize(8.5);
+    doc.setFont("Helvetica", "normal");
+    doc.setTextColor(51, 65, 85);
+    doc.text(`Total de Alunos na Turma: ${classStudents.length}`, 18, 57);
+    doc.text(`Total de Disciplinas: ${subjects.length}`, 18, 62);
+    doc.text(`Escala de Avaliação: 0 a ${maxScale} valores (Mínimo de Aprovação: ${threshold}v)`, 18, 67);
+
+    doc.text(`Sala / Turno: ${selectedClass.room || 'N/D'} / ${selectedClass.shift || 'Manhã'}`, 140, 57);
+    doc.text(`Capacidade: ${selectedClass.capacity || 0} alunos`, 140, 62);
+    doc.text(`Estado do Ano Lectivo: Em curso`, 140, 67);
+
+    // Summary table of subjects
+    const subjectSummaryRows = subjects.map((sub, idx) => {
+      let appCount = 0;
+      let repCount = 0;
+      let desCount = 0;
+      classStudents.forEach(s => {
+        if (s.enrollmentStatus === 'Desistente') {
+          desCount++;
+        } else {
+          const mfd = calculateAnnual(s.id, sub, getGradeFunc, selectedClass.level);
+          if (mfd >= threshold) appCount++;
+          else repCount++;
+        }
+      });
+      const totalAvaliados = appCount + repCount;
+      const taxa = totalAvaliados > 0 ? ((appCount / totalAvaliados) * 100).toFixed(1) + '%' : '0%';
+      return [
+        (idx + 1).toString(),
+        sub,
+        totalAvaliados.toString(),
+        appCount.toString(),
+        repCount.toString(),
+        desCount.toString(),
+        taxa
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 73,
+      head: [['Nº', 'Disciplina', 'Avaliados', 'Aprovados', 'Reprovados', 'Desistentes', 'Taxa de Sucesso']],
+      body: subjectSummaryRows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [30, 58, 138],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 8.5,
+        halign: 'center'
+      },
+      bodyStyles: {
+        fontSize: 8,
+        textColor: [30, 41, 59]
+      },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 12 },
+        1: { halign: 'left' },
+        2: { halign: 'center', cellWidth: 28 },
+        3: { halign: 'center', cellWidth: 28 },
+        4: { halign: 'center', cellWidth: 28 },
+        5: { halign: 'center', cellWidth: 28 },
+        6: { halign: 'center', cellWidth: 32, fontStyle: 'bold' }
+      },
+      margin: { left: 14, right: 14 }
+    });
+
+    // Signature Block on Cover
+    let coverFinalY = (doc as any).lastAutoTable?.finalY || 130;
+    coverFinalY = Math.max(coverFinalY + 12, pageHeight - 35);
+    const sigWidth = (pageWidth - 28) / 3;
+
+    doc.setFontSize(8);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(51, 65, 85);
+    
+    doc.text("O Director de Turma", 14 + sigWidth / 2, coverFinalY, { align: "center" });
+    doc.setDrawColor(148, 163, 184);
+    doc.line(14 + 10, coverFinalY + 10, 14 + sigWidth - 10, coverFinalY + 10);
+
+    doc.text("O Subdirector Pedagógico", 14 + sigWidth + sigWidth / 2, coverFinalY, { align: "center" });
+    doc.line(14 + sigWidth + 10, coverFinalY + 10, 14 + sigWidth * 2 - 10, coverFinalY + 10);
+
+    doc.text("O Director Geral", 14 + sigWidth * 2 + sigWidth / 2, coverFinalY, { align: "center" });
+    doc.line(14 + sigWidth * 2 + 10, coverFinalY + 10, pageWidth - 14 - 10, coverFinalY + 10);
+
+
+    // --- PAGES FOR EACH SUBJECT ---
+    subjects.forEach((subject) => {
+      doc.addPage();
+      drawOfficialHeader(doc, `PAUTA DA DISCIPLINA: ${subject.toUpperCase()}`, `Pauta de Classificações Contínuas e Finais`);
+
+      let appCount = 0;
+      let repCount = 0;
+      let desCount = 0;
+
+      const rows = classStudents.map((student, idx) => {
+        const mt1 = calculateMT(student.id, subject, '1º Trimestre', getGradeFunc, selectedClass.level);
+        const mt2 = calculateMT(student.id, subject, '2º Trimestre', getGradeFunc, selectedClass.level);
+        const mt3 = calculateMT(student.id, subject, '3º Trimestre', getGradeFunc, selectedClass.level);
+        const mfd = calculateAnnual(student.id, subject, getGradeFunc, selectedClass.level);
+
+        let res = 'Aprovado';
+        if (student.enrollmentStatus === 'Desistente') {
+          res = 'Desistente';
+          desCount++;
+        } else if (mfd >= threshold) {
+          res = 'Aprovado';
+          appCount++;
+        } else {
+          res = 'Reprovado';
+          repCount++;
+        }
+
+        return [
+          (idx + 1).toString(),
+          student.bi || student.id.substring(0, 8).toUpperCase(),
+          student.name,
+          mt1.toFixed(1),
+          mt2.toFixed(1),
+          mt3.toFixed(1),
+          mfd.toFixed(1),
+          res
+        ];
+      });
+
+      autoTable(doc, {
+        startY: 45,
+        head: [['Nº', 'Processo', 'Nome Completo do Estudante', '1º Trim (MT1)', '2º Trim (MT2)', '3º Trim (MT3)', 'Média Final (MFD)', 'Resultado']],
+        body: rows,
+        theme: 'grid',
+        headStyles: {
+          fillColor: [15, 23, 42],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 8.5,
+          halign: 'center'
+        },
+        bodyStyles: {
+          fontSize: 8,
+          textColor: [30, 41, 59]
+        },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 12 },
+          1: { halign: 'center', cellWidth: 26 },
+          2: { halign: 'left' },
+          3: { halign: 'center', cellWidth: 28 },
+          4: { halign: 'center', cellWidth: 28 },
+          5: { halign: 'center', cellWidth: 28 },
+          6: { halign: 'center', cellWidth: 32, fontStyle: 'bold' },
+          7: { halign: 'center', cellWidth: 28, fontStyle: 'bold' }
+        },
+        didParseCell: (data) => {
+          if (data.section === 'body') {
+            if (data.column.index >= 3 && data.column.index <= 6) {
+              const val = parseFloat(data.cell.text[0]);
+              if (!isNaN(val)) {
+                if (val < threshold) {
+                  data.cell.styles.textColor = [225, 29, 72];
+                  data.cell.styles.fontStyle = 'bold';
+                }
+              }
+            }
+            if (data.column.index === 7) {
+              const text = data.cell.text[0];
+              if (text === 'Aprovado') data.cell.styles.textColor = [22, 101, 52];
+              else if (text === 'Reprovado') data.cell.styles.textColor = [225, 29, 72];
+              else data.cell.styles.textColor = [100, 116, 139];
+            }
+          }
+        },
+        margin: { left: 14, right: 14 }
+      });
+
+      let sFinalY = (doc as any).lastAutoTable?.finalY || 130;
+      if (sFinalY > pageHeight - 40) {
+        doc.addPage();
+        sFinalY = 20;
+      } else {
+        sFinalY += 5;
+      }
+
+      // Subject Summary bar
+      doc.setFillColor(241, 245, 249);
+      doc.rect(14, sFinalY, pageWidth - 28, 10, 'F');
+      doc.setDrawColor(203, 213, 225);
+      doc.rect(14, sFinalY, pageWidth - 28, 10, 'S');
+
+      const totalAvaliados = appCount + repCount;
+      const taxaAprov = totalAvaliados > 0 ? ((appCount / totalAvaliados) * 100).toFixed(1) + '%' : '0%';
+
+      doc.setFontSize(8);
+      doc.setFont("Helvetica", "bold");
+      doc.setTextColor(30, 41, 59);
+      doc.text(`Estatística da Disciplina [${subject}]:   Avaliados: ${totalAvaliados}   |   Aprovados: ${appCount}   |   Reprovados: ${repCount}   |   Desistentes: ${desCount}   |   Sucesso: ${taxaAprov}`, 18, sFinalY + 6.5);
+
+      // Signatures
+      const sigY = Math.max(sFinalY + 18, pageHeight - 32);
+      doc.setFontSize(8);
+      doc.setFont("Helvetica", "bold");
+      doc.setTextColor(51, 65, 85);
+      doc.text(`O Professor da Disciplina (${subject})`, 14 + sigWidth / 2, sigY, { align: "center" });
+      doc.line(14 + 10, sigY + 10, 14 + sigWidth - 10, sigY + 10);
+
+      doc.text("O Subdirector Pedagógico", 14 + sigWidth * 2 + sigWidth / 2, sigY, { align: "center" });
+      doc.line(14 + sigWidth * 2 + 10, sigY + 10, pageWidth - 14 - 10, sigY + 10);
+    });
+
+    // --- FINAL CONSOLIDATED PAUTA ---
+    doc.addPage();
+    drawOfficialHeader(doc, "PAUTA GERAL CONSOLIDADA DA TURMA", "Matriz Global de Aproveitamento de Todas as Disciplinas");
+
+    const getTrimesterAvg = (studentId: string, period: string) => {
+      if (subjects.length === 0) return 0;
+      const sum = subjects.reduce((acc, sub) => acc + calculateMT(studentId, sub, period, getGradeFunc, selectedClass.level), 0);
+      return sum / subjects.length;
+    };
+
+    const headers = ['Nº', 'Nome do Aluno', ...subjects.map(s => s.length > 12 ? s.substring(0, 10) + '.' : s), 'Média Geral', 'Estado'];
+
+    const consolidatedRows = classStudents.map((student, idx) => {
+      const subjectMFDs = subjects.map(sub => calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level));
+      const mt1 = getTrimesterAvg(student.id, '1º Trimestre');
+      const mt2 = getTrimesterAvg(student.id, '2º Trimestre');
+      const mt3 = getTrimesterAvg(student.id, '3º Trimestre');
+      const mfdGlobal = (mt1 + mt2 + mt3) / 3;
+
+      let estadoStr = 'Apto';
+      if (student.enrollmentStatus === 'Desistente') estadoStr = 'Desistente';
+      else if (mfdGlobal < threshold) estadoStr = 'N/Apto';
+
+      return [
+        (idx + 1).toString(),
+        student.name,
+        ...subjectMFDs.map(m => m.toFixed(1)),
+        mfdGlobal.toFixed(1),
+        estadoStr
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 45,
+      head: [headers],
+      body: consolidatedRows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [6, 78, 59],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 8,
+        halign: 'center'
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [30, 41, 59]
+      },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 10 },
+        1: { halign: 'left', cellWidth: 42 },
+        [headers.length - 2]: { halign: 'center', fontStyle: 'bold' },
+        [headers.length - 1]: { halign: 'center', fontStyle: 'bold' }
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body') {
+          if (data.column.index >= 2 && data.column.index < headers.length - 1) {
+            const val = parseFloat(data.cell.text[0]);
+            if (!isNaN(val) && val < threshold) {
+              data.cell.styles.textColor = [225, 29, 72];
+              data.cell.styles.fontStyle = 'bold';
+            }
+          }
+          if (data.column.index === headers.length - 1) {
+            const st = data.cell.text[0];
+            if (st === 'Apto') data.cell.styles.textColor = [22, 101, 52];
+            else if (st === 'N/Apto') data.cell.styles.textColor = [225, 29, 72];
+            else data.cell.styles.textColor = [100, 116, 139];
+          }
+        }
+      },
+      margin: { left: 14, right: 14 }
+    });
+
+    let cFinalY = (doc as any).lastAutoTable?.finalY || 130;
+    cFinalY = Math.max(cFinalY + 12, pageHeight - 35);
+
+    doc.setFontSize(8);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(51, 65, 85);
+    
+    doc.text("O Director de Turma", 14 + sigWidth / 2, cFinalY, { align: "center" });
+    doc.line(14 + 10, cFinalY + 10, 14 + sigWidth - 10, cFinalY + 10);
+
+    doc.text("O Subdirector Pedagógico", 14 + sigWidth + sigWidth / 2, cFinalY, { align: "center" });
+    doc.line(14 + sigWidth + 10, cFinalY + 10, 14 + sigWidth * 2 - 10, cFinalY + 10);
+
+    doc.text("O Director Geral da Escola", 14 + sigWidth * 2 + sigWidth / 2, cFinalY, { align: "center" });
+    doc.line(14 + sigWidth * 2 + 10, cFinalY + 10, pageWidth - 14 - 10, cFinalY + 10);
+
+    // Page numbering footer
+    const totalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(7.5);
+      doc.setFont("Helvetica", "normal");
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Página ${i} de ${totalPages}   |   Arquivo Oficial de Pautas Unificadas   |   ${schoolSettings.nomeEscola || 'EduGest Angola'}`, pageWidth / 2, pageHeight - 5, { align: "center" });
+    }
+
+    doc.save(`Pautas_Unificadas_Turma_${selectedClass.name.replace(/ /g, '_')}_${schoolSettings.anoLectivo}.pdf`);
+    notify('PDF Unificado de pautas gerado com sucesso!', 'success');
+  } catch (err) {
+    console.error("Erro ao gerar PDF unificado:", err);
+    notify('Erro ao gerar o ficheiro PDF das pautas.', 'error');
+  }
+};
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<SystemUser | null>(null);
@@ -210,14 +635,51 @@ export default function App() {
   const [selectedListClassId, setSelectedListClassId] = useState<string>('');
   const [certInitData, setCertInitData] = useState<{ studentId?: string, tab?: 'list' | 'editor' | 'issue', bulkIds?: string[] }>({});
   
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
+    const saved = localStorage.getItem('edugest_audit_logs');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const logAuditEvent = (action: string, details?: string, userOverride?: SystemUser | null) => {
+    const user = userOverride || currentUser;
+    if (!user) return;
+    const newLog: AuditLog = {
+      id: `audit-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      userRole: user.role,
+      action,
+      timestamp: new Date().toLocaleString('pt-PT'),
+      details
+    };
+    setAuditLogs(prev => {
+      const updated = [newLog, ...prev].slice(0, 500);
+      localStorage.setItem('edugest_audit_logs', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   useEffect(() => {
+    const savedTheme = localStorage.getItem('edugest_theme') || 'light';
+    document.documentElement.className = savedTheme;
     if (authService.isAuthenticated()) {
       setIsAuthenticated(true);
-      setCurrentUser(authService.getCurrentUser());
+      const user = authService.getCurrentUser();
+      setCurrentUser(user);
+      if (user) {
+        // Debounce or only log system access once per session-load
+        logAuditEvent('Acesso ao Sistema', 'Sessão activa recuperada', user);
+        // Direct Sync with Backend on mount!
+        triggerSilentSupabasePull();
+      }
     }
   }, []);
 
   const handleLogout = () => {
+    if (currentUser) {
+      logAuditEvent('Logout', 'Encerrou sessão com sucesso', currentUser);
+    }
     authService.logout();
     setIsAuthenticated(false);
     setCurrentUser(null);
@@ -228,6 +690,7 @@ export default function App() {
   }, [activeView]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [navFilter, setNavFilter] = useState<string>('Todas');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' | 'warning' } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -261,6 +724,513 @@ export default function App() {
     });
   };
   const [isMobile, setIsMobile] = useState(false);
+
+  // States for offline storage and automatic cloud synchronization (e.g. Supabase compatibility)
+  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [isSimulatedOffline, setIsSimulatedOffline] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
+  const [syncModalTab, setSyncModalTab] = useState<'status' | 'data' | 'sql'>('status');
+  const [syncRetryCount, setSyncRetryCount] = useState<number>(0);
+  const [syncQueue, setSyncQueue] = useState<{ id: string; type: string; description: string; timestamp: string; data: any }[]>(() => {
+    const saved = localStorage.getItem('edugest_sync_queue');
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return validateAndCleanSyncQueue(parsed);
+    } catch {
+      return [];
+    }
+  });
+
+  // Track online/offline status
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const triggerSilentSupabasePull = async () => {
+    const actuallyOnline = navigator.onLine && !isSimulatedOffline;
+    if (!actuallyOnline) return;
+    
+    setIsSyncing(true);
+    try {
+      const cloudData = await pullFromSupabase();
+      if (cloudData) {
+        if (cloudData.schools && cloudData.schools.length > 0) setSchools(cloudData.schools);
+        if (cloudData.classes && cloudData.classes.length > 0) setClasses(cloudData.classes);
+        if (cloudData.students && cloudData.students.length > 0) setStudents(cloudData.students);
+        if (cloudData.teachers && cloudData.teachers.length > 0) setTeachers(cloudData.teachers);
+        if (cloudData.grades && cloudData.grades.length > 0) setGrades(cloudData.grades);
+        if (cloudData.payments && cloudData.payments.length > 0) setPayments(cloudData.payments);
+        if (cloudData.expenses && cloudData.expenses.length > 0) setExpenses(cloudData.expenses);
+        if (cloudData.users && cloudData.users.length > 0) setUsers(cloudData.users);
+        if (cloudData.announcements && cloudData.announcements.length > 0) setAnnouncements(cloudData.announcements);
+        if (cloudData.auditLogs && cloudData.auditLogs.length > 0) setAuditLogs(cloudData.auditLogs);
+        
+        console.log('Sincronização directa com o backend (Supabase) concluída com sucesso.');
+      }
+    } catch (err) {
+      console.error('Erro na sincronização directa inicial:', err);
+      throw err;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Sync Action helper with exponential backoff & integrity validation
+  const queueSyncAction = async (type: string, description: string, data: any = null) => {
+    const actuallyOnline = isOnline && !isSimulatedOffline;
+    if (!actuallyOnline) {
+      const newItem = {
+        id: Math.random().toString(36).substring(2, 11),
+        type,
+        description,
+        timestamp: new Date().toLocaleTimeString('pt-PT') + ' ' + new Date().toLocaleDateString('pt-PT'),
+        data
+      };
+      setSyncQueue(prev => {
+        const cleaned = validateAndCleanSyncQueue([...prev, newItem]);
+        localStorage.setItem('edugest_sync_queue', JSON.stringify(cleaned));
+        return cleaned;
+      });
+      showToast(`Guardado localmente (Modo Offline): ${description}`, 'info');
+    } else {
+      try {
+        await pushItemToSupabaseWithRetry({ type, data }, 3, 1000, 6000);
+        showToast(`Sincronizado na Nuvem (Supabase): ${description}`, 'success');
+        setSyncRetryCount(0);
+      } catch (err) {
+        console.warn('Erro ao enviar para o Supabase após retentativas. Adicionando à fila local...', err);
+        const newItem = {
+          id: Math.random().toString(36).substring(2, 11),
+          type,
+          description,
+          timestamp: new Date().toLocaleTimeString('pt-PT') + ' ' + new Date().toLocaleDateString('pt-PT'),
+          data
+        };
+        setSyncQueue(prev => {
+          const cleaned = validateAndCleanSyncQueue([...prev, newItem]);
+          localStorage.setItem('edugest_sync_queue', JSON.stringify(cleaned));
+          return cleaned;
+        });
+        showToast(`Fila de sincronização (Guardado local devido a erro): ${description}`, 'warning');
+      }
+    }
+  };
+
+  // Periodic automatic sync background timer with exponential backoff on failure
+  useEffect(() => {
+    // Standard interval is 60s. If retry errors occur, back off exponentially: 15s, 30s, 60s, 120s, max 300s (5min)
+    const currentInterval = syncRetryCount > 0 
+      ? Math.min(300000, 15000 * Math.pow(2, syncRetryCount - 1))
+      : 60000;
+
+    const interval = setInterval(async () => {
+      const actuallyOnline = navigator.onLine && !isSimulatedOffline;
+      if (actuallyOnline && !isSyncing) {
+        try {
+          await triggerSilentSupabasePull();
+          setSyncRetryCount(0);
+        } catch (e) {
+          console.warn(`Falha no poll em segundo plano. Aplicando backoff exponencial (tentativa ${syncRetryCount + 1})...`, e);
+          setSyncRetryCount(prev => prev + 1);
+        }
+      }
+    }, currentInterval);
+
+    return () => clearInterval(interval);
+  }, [isSimulatedOffline, isSyncing, syncRetryCount]);
+
+  // Automatic synchronization effect with queue integrity verification and exponential retry
+  useEffect(() => {
+    const actuallyOnline = isOnline && !isSimulatedOffline;
+    if (actuallyOnline && syncQueue.length > 0 && !isSyncing) {
+      setIsSyncing(true);
+      
+      // 1. Verify queue integrity before processing to eliminate redundant/conflicting actions
+      const cleanQueue = validateAndCleanSyncQueue(syncQueue);
+      if (cleanQueue.length !== syncQueue.length) {
+        console.log(`[Sync Integrity] Fila de sincronização otimizada: de ${syncQueue.length} para ${cleanQueue.length} itens.`);
+        setSyncQueue(cleanQueue);
+        localStorage.setItem('edugest_sync_queue', JSON.stringify(cleanQueue));
+      }
+
+      if (cleanQueue.length === 0) {
+        setIsSyncing(false);
+        localStorage.removeItem('edugest_sync_queue');
+        return;
+      }
+
+      showToast(`A sincronizar dados com o Supabase (${cleanQueue.length} pendentes)...`, 'info');
+      
+      const syncAll = async () => {
+        let successCount = 0;
+        const failedItems = [];
+        
+        for (const item of cleanQueue) {
+          try {
+            await pushItemToSupabaseWithRetry({ type: item.type, data: item.data }, 3, 1000, 8000);
+            successCount++;
+          } catch (e) {
+            console.error(`Falha ao sincronizar item ${item.id} (${item.type}) após retentativas:`, e);
+            failedItems.push(item);
+          }
+        }
+        
+        if (successCount > 0) {
+          logAuditEvent('Sincronização Nuvem', `Sincronizou ${successCount} de ${cleanQueue.length} alterações pendentes de forma automática com o Supabase.`);
+        }
+        
+        setSyncQueue(failedItems);
+        if (failedItems.length > 0) {
+          localStorage.setItem('edugest_sync_queue', JSON.stringify(failedItems));
+          showToast(`Sincronização parcial: ${failedItems.length} alterações ainda pendentes. Agendada retentativa com backoff...`, 'warning');
+          setSyncRetryCount(prev => prev + 1);
+        } else {
+          localStorage.removeItem('edugest_sync_queue');
+          showToast('Sincronização concluída! Todos os dados integrados com o Supabase com sucesso.', 'success');
+          setSyncRetryCount(0);
+        }
+        setIsSyncing(false);
+      };
+
+      const timer = setTimeout(() => {
+        syncAll();
+      }, 1500);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [isOnline, isSimulatedOffline, syncQueue.length, isSyncing]);
+
+  const handleExportAllToSupabase = async () => {
+    if (!isOnline || isSimulatedOffline) {
+      showToast('Tem que estar Online para exportar para o Supabase!', 'error');
+      return;
+    }
+    setIsSyncing(true);
+    showToast('A preparar envio em massa para o Supabase...', 'info');
+    
+    try {
+      await performFullBackup({
+        schools,
+        classes,
+        students,
+        teachers,
+        grades,
+        payments,
+        expenses,
+        users,
+        announcements,
+        auditLogs
+      });
+      const totalExported = schools.length + classes.length + students.length + teachers.length + grades.length + payments.length + expenses.length + users.length + announcements.length + auditLogs.length;
+      logAuditEvent('Sincronização Nuvem', `Exportação em massa concluída. ${totalExported} registos exportados para o Supabase.`);
+      showToast(`Sucesso! ${totalExported} registos locais foram exportados (semeados) para o Supabase.`, 'success');
+    } catch (err: any) {
+      console.error('Falha na exportação em massa:', err);
+      showToast(`Falha ao exportar dados: ${err.message || err}`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+    return;
+    /*
+    try {
+      let totalExported = 0;
+      
+      // 1. Export Schools
+      for (const s of schools) {
+        await supabase.from('escolas').upsert({
+          id: s.id,
+          name: s.name,
+          nif: s.nif || null,
+          address: s.address || null,
+          phone: s.phone || null,
+          email: s.email || null,
+          director_name: s.directorName || null,
+          subdirector_name: s.subdirectorName || null,
+          status: s.status,
+          republica: s.republica || null,
+          governo_provincia: s.governoProvincia || null,
+          administracao_municipal: s.administracaoMunicipal || null,
+          direccao_municipal: s.direccaoMunicipal || null,
+          ano_lectivo: s.anoLectivo || null,
+          subscription: s.subscription || null
+        });
+        totalExported++;
+      }
+      
+      // 2. Export Classes
+      for (const c of classes) {
+        await supabase.from('turmas').upsert({
+          id: c.id,
+          name: c.name,
+          level: c.level,
+          course: c.course || null,
+          shift: c.shift,
+          room: c.room,
+          capacity: c.capacity,
+          subjects: c.subjects || [],
+          school_id: c.schoolId || 's1'
+        });
+        totalExported++;
+      }
+      
+      // 3. Export Students
+      for (const st of students) {
+        await supabase.from('alunos').upsert({
+          id: st.id,
+          name: st.name,
+          bi: st.bi,
+          birth_date: st.birthDate || null,
+          gender: st.gender,
+          guardian_name: st.guardianName || null,
+          guardian_phone: st.guardianPhone || null,
+          class_id: st.classId || null,
+          enrollment_status: st.enrollmentStatus,
+          enrollment_date: st.enrollmentDate || null,
+          school_id: st.schoolId || 's1',
+          residential_zone: st.residentialZone || null
+        });
+        totalExported++;
+      }
+      
+      // 4. Export Teachers
+      for (const t of teachers) {
+        await supabase.from('professores').upsert({
+          id: t.id,
+          name: t.name,
+          specialization: t.specialization || null,
+          phone: t.phone || null,
+          assignments: t.assignments || [],
+          portal_token: t.portalToken || null,
+          school_id: t.schoolId || 's1'
+        });
+        totalExported++;
+      }
+
+      // 5. Export Grades
+      if (grades.length > 0) {
+        const payloads = grades.map(g => ({
+          student_id: g.studentId,
+          subject_id: g.subjectId,
+          period: g.period,
+          type: g.type,
+          value: g.value,
+          school_id: g.schoolId || 's1'
+        }));
+        await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
+        totalExported += grades.length;
+      }
+
+      // 6. Export Payments
+      for (const p of payments) {
+        await supabase.from('pagamentos').upsert({
+          id: p.id,
+          student_id: p.studentId,
+          month: p.month || null,
+          service: p.service,
+          amount: p.amount,
+          fine: p.fine || 0,
+          discount: p.discount || 0,
+          date: p.date,
+          status: p.status,
+          receipt_number: p.receiptNumber,
+          school_id: p.schoolId || 's1'
+        });
+        totalExported++;
+      }
+
+      // 7. Export Expenses
+      for (const exp of expenses) {
+        await supabase.from('despesas').upsert({
+          id: exp.id,
+          description: exp.description,
+          category: exp.category || null,
+          amount: exp.amount,
+          date: exp.date,
+          receipt_number: exp.receiptNumber || null,
+          school_id: exp.schoolId || 's1'
+        });
+        totalExported++;
+      }
+
+      // 8. Export Users
+      for (const u of users) {
+        await supabase.from('utilizadores').upsert({
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          password: u.password || null,
+          role: u.role,
+          status: u.status,
+          last_login: u.lastLogin || null,
+          school_id: u.schoolId || 's1',
+          assigned_class_ids: u.assignedClassIds || [],
+          avatar_url: u.avatarUrl || null,
+          student_id: u.studentId || null
+        });
+        totalExported++;
+      }
+
+      // 9. Export Announcements
+      for (const a of announcements) {
+        await supabase.from('comunicados').upsert({
+          id: a.id,
+          title: a.title,
+          content: a.content,
+          date: a.date,
+          sender_id: a.senderId,
+          sender_name: a.senderName,
+          sender_role: a.senderRole,
+          target_audience: (a.targetAudience === 'specific_users' || a.targetAudience === 'specific_role' || (a.targetUserIds && a.targetUserIds.length > 0) || a.targetRole)
+            ? JSON.stringify({ audience: a.targetAudience, userIds: a.targetUserIds || [], role: a.targetRole || null })
+            : a.targetAudience,
+          school_id: a.schoolId || 's1'
+        });
+        totalExported++;
+      }
+
+      // 10. Export Audit Logs
+      for (const al of auditLogs) {
+        await supabase.from('audit_logs').upsert({
+          id: al.id,
+          user_id: al.userId,
+          user_name: al.userName,
+          user_email: al.userEmail,
+          user_role: al.userRole,
+          action: al.action,
+          timestamp: al.timestamp,
+          details: al.details || null
+        });
+        totalExported++;
+      }
+      
+      logAuditEvent('Sincronização Nuvem', `Exportação em massa concluída. ${totalExported} registos exportados para o Supabase.`);
+      showToast(`Sucesso! ${totalExported} registos locais foram exportados (semeados) para o Supabase.`, 'success');
+    } catch (err: any) {
+      console.error('Falha na exportação em massa:', err);
+      showToast(`Falha ao exportar dados: ${err.message || err}`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+    */
+  };
+
+  const handleImportAllFromSupabase = async () => {
+    if (!isOnline || isSimulatedOffline) {
+      showToast('Tem que estar Online para importar do Supabase!', 'error');
+      return;
+    }
+    setIsSyncing(true);
+    showToast('A importar todos os dados do Supabase...', 'info');
+    
+    try {
+      const cloudData = await pullFromSupabase();
+      if (!cloudData) {
+        showToast('Nenhum dado encontrado no Supabase. Verifique se criou as tabelas utilizando o Script SQL!', 'warning');
+        return;
+      }
+      
+      if (cloudData.schools.length > 0) setSchools(cloudData.schools);
+      if (cloudData.classes.length > 0) setClasses(cloudData.classes);
+      if (cloudData.students.length > 0) setStudents(cloudData.students);
+      if (cloudData.teachers.length > 0) setTeachers(cloudData.teachers);
+      if (cloudData.grades.length > 0) setGrades(cloudData.grades);
+      if (cloudData.payments.length > 0) setPayments(cloudData.payments);
+      if (cloudData.expenses.length > 0) setExpenses(cloudData.expenses);
+      if (cloudData.users.length > 0) setUsers(cloudData.users);
+      if (cloudData.announcements.length > 0) setAnnouncements(cloudData.announcements);
+      if (cloudData.auditLogs.length > 0) setAuditLogs(cloudData.auditLogs);
+      
+      const count = cloudData.schools.length + cloudData.classes.length + cloudData.students.length + cloudData.teachers.length + cloudData.grades.length + cloudData.payments.length + cloudData.expenses.length + cloudData.users.length;
+      
+      logAuditEvent('Sincronização Nuvem', `Importação completa realizada com sucesso. ${count} registos carregados.`);
+      showToast(`Sucesso! ${count} registos carregados com sucesso do Supabase para o armazenamento local.`, 'success');
+    } catch (err: any) {
+      console.error('Falha na importação em massa:', err);
+      showToast(`Falha ao importar dados: ${err.message || err}`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleClearAllSupabaseData = async () => {
+    if (!isOnline || isSimulatedOffline) {
+      showToast('Tem que estar Online para limpar o Supabase!', 'error');
+      return;
+    }
+    setIsSyncing(true);
+    showToast('A limpar dados do Supabase e armazenamento local...', 'info');
+
+    try {
+      // 1. Limpar as tabelas no Supabase via backend proxy
+      await clearAllSupabaseData();
+
+      // 2. Limpar o estado local da aplicação para sincronizar o reset completo
+      setSchools([]);
+      setClasses([]);
+      setStudents([]);
+      setTeachers([]);
+      setGrades([]);
+      setPayments([]);
+      setExpenses([]);
+      setAnnouncements([]);
+      setAuditLogs([]);
+
+      // 3. Limpar localStorage para garantir persistência local nula
+      localStorage.setItem('edugest_schools', JSON.stringify([]));
+      localStorage.setItem('edugest_classes', JSON.stringify([]));
+      localStorage.setItem('edugest_students', JSON.stringify([]));
+      localStorage.setItem('edugest_teachers', JSON.stringify([]));
+      localStorage.setItem('edugest_grades', JSON.stringify([]));
+      localStorage.setItem('edugest_payments', JSON.stringify([]));
+      localStorage.setItem('edugest_expenses', JSON.stringify([]));
+      localStorage.setItem('edugest_announcements', JSON.stringify([]));
+      localStorage.setItem('edugest_audit_logs', JSON.stringify([]));
+
+      // 4. Se houver um utilizador actual logado no navegador, vamos reinserir apenas o seu perfil
+      // na tabela remota para ele não perder o acesso ao painel de administração remota
+      if (currentUser) {
+        await pushItemToSupabaseWithRetry({
+          type: 'CADASTRAR_UTILIZADOR',
+          data: {
+            id: currentUser.id,
+            name: currentUser.name,
+            email: currentUser.email,
+            password: currentUser.password || null,
+            role: currentUser.role,
+            status: currentUser.status,
+            schoolId: currentUser.schoolId || 's1',
+            assignedClassIds: currentUser.assignedClassIds || []
+          }
+        });
+        setUsers([currentUser]);
+        localStorage.setItem('edugest_users', JSON.stringify([currentUser]));
+      } else {
+        setUsers([]);
+        localStorage.setItem('edugest_users', JSON.stringify([]));
+      }
+
+      logAuditEvent('Limpeza Total', 'Todas as escolas, turmas, alunos e demais dados foram totalmente limpos do Supabase e do armazenamento local.');
+      showToast('Sucesso! Toda a base de dados remota e local foi limpa. Pode iniciar os cadastros do zero.', 'success');
+    } catch (err: any) {
+      console.error('Falha ao limpar base de dados:', err);
+      showToast(`Falha ao limpar dados: ${err.message || err}`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   useEffect(() => {
     const checkMobile = () => {
@@ -309,6 +1279,10 @@ export default function App() {
     const saved = localStorage.getItem('edugest_templates');
     return saved ? JSON.parse(saved) : [];
   });
+  const [announcements, setAnnouncements] = useState<Announcement[]>(() => {
+    const saved = localStorage.getItem('edugest_announcements');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [schools, setSchools] = useState<School[]>(() => {
     const saved = localStorage.getItem('edugest_schools');
     return saved ? JSON.parse(saved) : INITIAL_SCHOOLS;
@@ -319,23 +1293,29 @@ export default function App() {
 
   const [viewConfigs, setViewConfigs] = useState<Record<View, { title: string, subtitle: string }>>(() => {
     const defaultConfigs = {
-      dashboard: { title: 'Painel Geral', subtitle: 'Bem-vindo ao sistema de gestão escolar' },
-      students: { title: 'Alunos', subtitle: 'Gestão de matrículas e listagens' },
-      academic: { title: 'Académico', subtitle: 'Controlo de pautas e aproveitamento' },
+      dashboard: { title: 'Estatística (Painel)', subtitle: 'Bem-vindo ao sistema de gestão escolar' },
+      students: { title: 'Alunos & Matrículas', subtitle: 'Gestão de matrículas e listagens' },
+      academic: { title: 'Relatório Académico', subtitle: 'Controlo de pautas e aproveitamento' },
       finance: { title: 'Finanças', subtitle: 'Gestão de propinas e pagamentos' },
       teachers: { title: 'Professores', subtitle: 'Gestão do corpo docente' },
-      classes: { title: 'Turmas', subtitle: 'Gestão de turmas e salas' },
-      lists: { title: 'Listas Nominais', subtitle: 'Listas de alunos por turma' },
+      classes: { title: 'Classes & Turmas', subtitle: 'Gestão de turmas e salas' },
+      lists: { title: 'Lançamento de Notas', subtitle: 'Listas de alunos por turma' },
       'mini-pautas': { title: 'Mini Pautas', subtitle: 'Gestão de notas por disciplina' },
-      'pauta-final': { title: 'Pauta Final', subtitle: 'Aproveitamento anual dos alunos' },
+      'pauta-final': { title: 'Pautas Finais', subtitle: 'Aproveitamento anual dos alunos' },
       boletim: { title: 'Boletim de Notas', subtitle: 'Relatório individual do aluno' },
-      certificates: { title: 'Certificados', subtitle: 'Emissão de certificados e diplomas' },
-      settings: { title: 'Configurações', subtitle: 'Ajustes e informações do sistema' },
-      users: { title: 'Utilizadores', subtitle: 'Gestão de acessos e utilizadores do sistema' },
-      backup: { title: 'Cópia de Segurança', subtitle: 'Importar e exportar dados do sistema' },
+      certificates: { title: 'Certificados & Declarações', subtitle: 'Emissão de certificados e diplomas' },
+      settings: { title: 'Dados da Escola & Anos', subtitle: 'Ajustes e informações do sistema' },
+      users: { title: 'Utilizadores & Funcionários', subtitle: 'Gestão de acessos e utilizadores do sistema' },
+      backup: { title: 'Backup do Sistema', subtitle: 'Importar e exportar dados do sistema' },
       schools: { title: 'Gestão de Escolas', subtitle: 'Administração de instituições e filiais' },
-      profile: { title: 'Meu Perfil', subtitle: 'Gestão de perfil e preferências do utilizador' },
-    };
+      profile: { title: 'Perfil e Preferências', subtitle: 'Gestão de perfil e preferências do utilizador' },
+      announcements: { title: 'Comunicados', subtitle: 'Envio e leitura de comunicados' },
+      exams: { title: 'Exames', subtitle: 'Lançamento de notas de exames' },
+      transfers: { title: 'Transferências de Alunos', subtitle: 'Gestão de transferências' },
+      calendar: { title: 'Calendário Escolar', subtitle: 'Planeamento de atividades e avaliações' },
+      archive: { title: 'Arquivo Digital', subtitle: 'Armazenamento seguro de documentos' },
+      audit: { title: 'Auditoria de Acesso', subtitle: 'Histórico de acções e registo de acessos' }
+    } as Record<View, { title: string, subtitle: string }>;
 
     const saved = localStorage.getItem('edugest_view_configs');
     if (saved) {
@@ -351,18 +1331,42 @@ export default function App() {
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [tempHeader, setTempHeader] = useState({ title: '', subtitle: '' });
 
-  const getGrade = (studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT' = 'MAC') => {
+  const getGrade = (studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' = 'MAC') => {
     const existing = grades.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === type);
-    return existing ? existing.value : 0;
+    if (existing) return existing.value;
+
+    if (type === 'MAC') {
+      const ac1 = grades.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === 'AC1');
+      const ac2 = grades.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === 'AC2');
+      const ac3 = grades.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === 'AC3');
+      if (ac1 || ac2 || ac3) {
+        const v1 = ac1?.value ?? 0;
+        const v2 = ac2?.value ?? 0;
+        const v3 = ac3?.value ?? 0;
+        return Number(((v1 + v2 + v3) / 3).toFixed(1));
+      }
+    }
+
+    return 0;
   };
 
-  const [schoolSettings, setSchoolSettings] = useState<SchoolSettings>({
-    republica: 'República de Angola',
-    governoProvincia: 'Governo da Província do Cuanza-Sul',
-    administracaoMunicipal: 'Administração Municipal do Waku-Kungo',
-    direccaoMunicipal: 'Direcção Municipal da Educação',
-    nomeEscola: 'Escola Primária',
-    anoLectivo: '2023/2024'
+  const [schoolSettings, setSchoolSettings] = useState<SchoolSettings>(() => {
+    const saved = localStorage.getItem('edugest_school_settings');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        // Fallback
+      }
+    }
+    return {
+      republica: 'República de Angola',
+      governoProvincia: 'Governo da Província do Cuanza-Sul',
+      administracaoMunicipal: 'Administração Municipal do Waku-Kungo',
+      direccaoMunicipal: 'Direcção Municipal da Educação',
+      nomeEscola: 'Escola Primária',
+      anoLectivo: '2023/2024'
+    };
   });
 
   const currentSchoolId = currentUser?.role === 'Super-Administrador'
@@ -370,32 +1374,40 @@ export default function App() {
     : currentUser?.schoolId;
 
   const currentSchool = schools.find(s => s.id === currentSchoolId);
+  
+  const hasActiveSubscription = currentUser?.role === 'Super-Administrador' || (
+    !currentSchool?.subscription || currentSchool.subscription.status === 'Activa'
+  );
+  
+  const showSubscriptionAlert = currentUser?.role !== 'Super-Administrador' && currentSchool && !hasActiveSubscription;
 
   // Sync schoolSettings with the active school when it changes
   useEffect(() => {
     if (currentSchool) {
-      setSchoolSettings({
+      setSchoolSettings(prev => ({
+        ...prev,
         republica: currentSchool.republica || 'República de Angola',
         governoProvincia: currentSchool.governoProvincia || 'Governo da Província do Cuanza-Sul',
         administracaoMunicipal: currentSchool.administracaoMunicipal || 'Administração Municipal',
         direccaoMunicipal: currentSchool.direccaoMunicipal || 'Direcção Municipal da Educação',
         nomeEscola: currentSchool.name,
-        anoLectivo: currentSchool.anoLectivo || '2023/2024'
-      });
+        anoLectivo: currentSchool.anoLectivo || '2023/2024',
+        logoBase64: currentSchool.logoBase64 || prev.logoBase64
+      }));
     }
   }, [currentSchoolId, schools]);
 
-  const filteredStudents = students.filter(s => !currentSchoolId || s.schoolId === currentSchoolId);
-  const filteredClasses = classes.filter(c => 
+  const filteredStudents = authService.filterBySchool<Student>(students).filter(s => !currentSchoolId || s.schoolId === currentSchoolId);
+  const filteredClasses = authService.filterBySchool<Class>(classes).filter(c => 
     (!currentSchoolId || c.schoolId === currentSchoolId) &&
     (currentUser?.role !== 'Professor' || currentUser.assignedClassIds?.includes(c.id))
   );
-  const filteredTeachers = teachers.filter(t => !currentSchoolId || t.schoolId === currentSchoolId);
-  const filteredPayments = payments.filter(p => !currentSchoolId || p.schoolId === currentSchoolId);
-  const filteredExpenses = expenses.filter(e => !currentSchoolId || e.schoolId === currentSchoolId);
-  const filteredGrades = grades.filter(g => !currentSchoolId || g.schoolId === currentSchoolId);
-  const filteredTemplates = templates.filter(t => !currentSchoolId || t.schoolId === currentSchoolId);
-  const filteredUsers = users.filter(u => 
+  const filteredTeachers = authService.filterBySchool<Teacher>(teachers).filter(t => !currentSchoolId || t.schoolId === currentSchoolId);
+  const filteredPayments = authService.filterBySchool<Payment>(payments).filter(p => !currentSchoolId || p.schoolId === currentSchoolId);
+  const filteredExpenses = authService.filterBySchool<Expense>(expenses).filter(e => !currentSchoolId || e.schoolId === currentSchoolId);
+  const filteredGrades = authService.filterBySchool<Grade>(grades).filter(g => !currentSchoolId || g.schoolId === currentSchoolId);
+  const filteredTemplates = authService.filterBySchool<CertificateTemplate>(templates).filter(t => !currentSchoolId || t.schoolId === currentSchoolId);
+  const filteredUsers = authService.filterBySchool<SystemUser>(users).filter(u => 
     currentUser?.role === 'Super-Administrador'
       ? (!currentSchoolId || u.schoolId === currentSchoolId || u.role === 'Super-Administrador')
       : (u.schoolId === currentUser?.schoolId)
@@ -417,7 +1429,7 @@ export default function App() {
     
     if (insignia) {
       if (paperSize === 'A3') {
-        doc.addImage(insignia, 'PNG', centerX - 12.5, 10, 25, 25);
+        doc.addImage(insignia, getImageFormat(insignia), centerX - 12.5, 10, 25, 25);
         doc.setFontSize(14);
         doc.setFont('helvetica', 'bold');
         doc.text(schoolSettings.republica || 'REPÚBLICA DE ANGOLA', centerX, 38, { align: 'center' });
@@ -435,7 +1447,7 @@ export default function App() {
         
         startY = 65;
       } else if (paperSize === 'A5') {
-        doc.addImage(insignia, 'PNG', centerX - 7, 8, 14, 14);
+        doc.addImage(insignia, getImageFormat(insignia), centerX - 7, 8, 14, 14);
         doc.setFontSize(8.5);
         doc.setFont('helvetica', 'bold');
         doc.text(schoolSettings.republica || 'REPÚBLICA DE ANGOLA', centerX, 25, { align: 'center' });
@@ -454,7 +1466,7 @@ export default function App() {
         startY = 44;
       } else {
         // A4
-        doc.addImage(insignia, 'PNG', centerX - 10, 10, 20, 20);
+        doc.addImage(insignia, getImageFormat(insignia), centerX - 10, 10, 20, 20);
         doc.setFontSize(11);
         doc.setFont('helvetica', 'bold');
         doc.text(schoolSettings.republica || 'REPÚBLICA DE ANGOLA', centerX, 33, { align: 'center' });
@@ -656,12 +1668,16 @@ export default function App() {
     setIsAuthenticated(true);
     setCurrentUser(fullUser);
     authService.login(fullUser);
+    logAuditEvent('Login', 'Iniciou sessão com sucesso', fullUser);
     
     // Check if new school settings were registered
     const newSettings = localStorage.getItem('edugest_school_settings');
     if (newSettings) {
       setSchoolSettings(JSON.parse(newSettings));
     }
+
+    // Direct Sync with Backend on login!
+    triggerSilentSupabasePull();
   };
 
   const [isAddingStudent, setIsAddingStudent] = useState(false);
@@ -694,66 +1710,133 @@ export default function App() {
     localStorage.setItem('edugest_view_configs', JSON.stringify(viewConfigs));
     localStorage.setItem('edugest_school_settings', JSON.stringify(schoolSettings));
     localStorage.setItem('edugest_schools', JSON.stringify(schools));
+    localStorage.setItem('edugest_announcements', JSON.stringify(announcements));
     if (selectedSchoolId) {
       localStorage.setItem('edugest_selected_school_id', selectedSchoolId);
     }
-  }, [students, classes, teachers, payments, expenses, grades, viewConfigs, schoolSettings, schools, selectedSchoolId, users]);
+  }, [students, classes, teachers, payments, expenses, grades, viewConfigs, schoolSettings, schools, selectedSchoolId, users, announcements]);
 
   const onUpdateStudents = (newStudents: Student[]) => {
+    const invalid = newStudents.some(s => s.schoolId && !authService.canAccessSchool(s.schoolId));
+    if (invalid) {
+      showToast('Erro de Permissão: Não tem autorização para modificar alunos fora da sua escola.', 'error');
+      return;
+    }
     setStudents(newStudents);
     showToast('Lista de alunos actualizada');
   };
   const onUpdateTeachers = (newTeachers: Teacher[]) => {
+    const invalid = newTeachers.some(t => t.schoolId && !authService.canAccessSchool(t.schoolId));
+    if (invalid) {
+      showToast('Erro de Permissão: Não tem autorização para modificar professores fora da sua escola.', 'error');
+      return;
+    }
     setTeachers(newTeachers);
     showToast('Lista de professores actualizada');
   };
   const onUpdateClasses = (newClasses: Class[]) => {
+    const invalid = newClasses.some(c => c.schoolId && !authService.canAccessSchool(c.schoolId));
+    if (invalid) {
+      showToast('Erro de Permissão: Não tem autorização para modificar turmas fora da sua escola.', 'error');
+      return;
+    }
     setClasses(newClasses);
     showToast('Lista de turmas actualizada');
   };
   const onUpdateGrades = (newGrades: Grade[]) => {
+    if (!authService.canAccessSchool(currentSchoolId)) {
+      showToast('Erro de Permissão: Não tem autorização para gerir notas nesta escola.', 'error');
+      return;
+    }
     const otherSchoolsGrades = grades.filter(g => g.schoolId !== currentSchoolId);
     const withSchoolId = newGrades.map(g => ({ ...g, schoolId: currentSchoolId || g.schoolId || 's1' }));
     setGrades([...otherSchoolsGrades, ...withSchoolId]);
     showToast('Notas actualizadas');
+    queueSyncAction('ACTUALIZAR_NOTAS', 'Actualização de pauta de notas', withSchoolId);
   };
 
   const onAddUser = (user: SystemUser) => {
-    setUsers([...users, { ...user, schoolId: user.schoolId || currentSchoolId || '' }]);
+    const targetSchoolId = user.schoolId || currentSchoolId || '';
+    if (!authService.canManageSchoolUsers(targetSchoolId)) {
+      showToast('Erro de Permissão: Não tem autorização para registar utilizadores nesta escola.', 'error');
+      return;
+    }
+    const newUserObj = { ...user, schoolId: targetSchoolId };
+    setUsers([...users, newUserObj]);
     showToast('Utilizador criado com sucesso', 'success');
+    logAuditEvent('Criar Utilizador', `Criou o utilizador ${user.name} (${user.role})`);
+    queueSyncAction('CADASTRAR_UTILIZADOR', `Cadastro do utilizador "${user.name}"`, newUserObj);
   };
   const onUpdateUser = (user: SystemUser) => {
-    setUsers(users.map(u => u.id === user.id ? { ...user, schoolId: user.schoolId || currentSchoolId || '' } : u));
+    const targetSchoolId = user.schoolId || currentSchoolId || '';
+    if (!authService.canManageSchoolUsers(targetSchoolId)) {
+      showToast('Erro de Permissão: Não tem autorização para modificar utilizadores nesta escola.', 'error');
+      return;
+    }
+    const updatedUserObj = { ...user, schoolId: targetSchoolId };
+    setUsers(users.map(u => u.id === user.id ? updatedUserObj : u));
     showToast('Dados do utilizador actualizados', 'success');
+    logAuditEvent('Actualizar Utilizador', `Actualizou o utilizador ${user.name} (${user.role})`);
+    queueSyncAction('ACTUALIZAR_UTILIZADOR', `Atualização do utilizador "${user.name}"`, updatedUserObj);
   };
   const onDeleteUser = (id: string) => {
     const user = users.find(u => u.id === id);
+    if (user && !authService.canManageSchoolUsers(user.schoolId)) {
+      showToast('Erro de Permissão: Não tem autorização para eliminar utilizadores desta escola.', 'error');
+      return;
+    }
     confirmAction(
       'Eliminar Utilizador',
       `Tem a certeza que deseja eliminar o utilizador ${user?.name}? Esta acção não pode ser desfeita.`,
       () => {
         setUsers(users.filter(u => u.id !== id));
         showToast('Utilizador eliminado', 'success');
+        if (user) {
+          logAuditEvent('Eliminar Utilizador', `Eliminou o utilizador ${user.name} (${user.role})`);
+          queueSyncAction('ELIMINAR_UTILIZADOR', `Eliminação do utilizador "${user.name}"`, { id });
+        }
       }
     );
   };
 
   const handleAddSchool = (newSchool: School, admin: SystemUser) => {
+    if (!authService.canManageSchools()) {
+      showToast('Erro de Permissão: Apenas o Super-Administrador pode cadastrar escolas.', 'error');
+      return;
+    }
     setSchools([...schools, newSchool]);
     setUsers([...users, admin]);
+    logAuditEvent('Criar Escola', `Adicionou a escola ${newSchool.name} e criou o seu administrador ${admin.name}`);
+    queueSyncAction('CRIAR_ESCOLA', `Criação da escola "${newSchool.name}"`, newSchool);
+    queueSyncAction('CADASTRAR_UTILIZADOR', `Cadastro do administrador "${admin.name}"`, admin);
   };
 
   const handleUpdateSchool = (updatedSchool: School) => {
+    if (!authService.canManageSchools()) {
+      showToast('Erro de Permissão: Apenas o Super-Administrador pode actualizar dados de escolas.', 'error');
+      return;
+    }
     setSchools(schools.map(s => s.id === updatedSchool.id ? updatedSchool : s));
+    logAuditEvent('Actualizar Escola', `Actualizou os dados da escola ${updatedSchool.name}`);
+    queueSyncAction('ACTUALIZAR_ESCOLA', `Atualização da escola "${updatedSchool.name}"`, updatedSchool);
   };
 
   const handleDeleteSchool = (id: string) => {
+    if (!authService.canManageSchools()) {
+      showToast('Erro de Permissão: Apenas o Super-Administrador pode eliminar escolas.', 'error');
+      return;
+    }
+    const school = schools.find(s => s.id === id);
     confirmAction(
       'Eliminar Escola',
       'Tem a certeza que deseja eliminar esta escola? Todos os dados associados a esta escola (alunos, turmas, etc.) não serão apagados automaticamente, mas não estarão mais acessíveis.',
       () => {
         setSchools(schools.filter(s => s.id !== id));
         showToast('Escola eliminada com sucesso', 'success');
+        if (school) {
+          logAuditEvent('Eliminar Escola', `Eliminou a escola ${school.name}`);
+          queueSyncAction('ELIMINAR_ESCOLA', `Eliminação da escola "${school.name}"`, { id });
+        }
       }
     );
   };
@@ -801,6 +1884,8 @@ export default function App() {
           if (data.schoolSettings) setSchoolSettings(data.schoolSettings);
           if (data.viewConfigs) setViewConfigs(data.viewConfigs);
           
+          performFullBackup(data).catch(err => console.error('Erro ao sincronizar backup para a nuvem:', err));
+
           showToast('Dados restaurados com sucesso!', 'success');
           setActiveView('dashboard');
         } catch (error) {
@@ -812,30 +1897,44 @@ export default function App() {
 
   const onDeleteStudent = (id: string) => {
     const student = students.find(s => s.id === id);
+    if (student && !authService.canAccessData(student)) {
+      showToast('Sem permissão para eliminar este aluno', 'error');
+      return;
+    }
     confirmAction(
       'Eliminar Aluno',
       `Tem a certeza que deseja eliminar o aluno ${student?.name}? Esta acção não pode ser desfeita.`,
       () => {
         setStudents(students.filter(s => s.id !== id));
         showToast('Aluno eliminado com sucesso', 'success');
+        queueSyncAction('ELIMINAR_ALUNO', `Eliminação do aluno "${student?.name || id}"`, { id });
       }
     );
   };
 
   const onDeleteTeacher = (id: string) => {
     const teacher = teachers.find(t => t.id === id);
+    if (teacher && !authService.canAccessData(teacher)) {
+      showToast('Sem permissão para eliminar este professor', 'error');
+      return;
+    }
     confirmAction(
       'Eliminar Professor',
       `Tem a certeza que deseja eliminar o professor ${teacher?.name}? Esta acção não pode ser desfeita.`,
       () => {
         setTeachers(teachers.filter(t => t.id !== id));
         showToast('Professor eliminado com sucesso', 'success');
+        queueSyncAction('ELIMINAR_PROFESSOR', `Eliminação do professor "${teacher?.name || id}"`, { id });
       }
     );
   };
 
   const onDeleteClass = (id: string) => {
     const cls = classes.find(c => c.id === id);
+    if (cls && !authService.canAccessData(cls)) {
+      showToast('Sem permissão para eliminar esta turma', 'error');
+      return;
+    }
     confirmAction(
       'Eliminar Turma',
       `Tem a certeza que deseja eliminar a turma ${cls?.name}? Todos os alunos desta turma ficarão sem turma atribuída.`,
@@ -843,6 +1942,7 @@ export default function App() {
         setClasses(classes.filter(c => c.id !== id));
         setStudents(students.map(s => s.classId === id ? { ...s, classId: '' } : s));
         showToast('Turma eliminada com sucesso', 'success');
+        queueSyncAction('ELIMINAR_TURMA', `Eliminação da turma "${cls?.name || id}"`, { id });
       }
     );
   };
@@ -850,22 +1950,32 @@ export default function App() {
   const userRole = currentUser?.role || 'Administrador';
 
   const allNavItems = [
-    { id: 'dashboard', label: 'Painel Geral', icon: LayoutDashboard, roles: ['Super-Administrador', 'Administrador', 'Secretário', 'Financeiro', 'Professor', 'Aluno'] },
-    { id: 'schools', label: 'Escolas', icon: SchoolIcon, roles: ['Super-Administrador'] },
-    { id: 'students', label: 'Alunos', icon: Users, roles: ['Super-Administrador', 'Administrador', 'Secretário'] },
-    { id: 'classes', label: 'Turmas', icon: Layers, roles: ['Super-Administrador', 'Administrador', 'Secretário', 'Professor'] },
-    { id: 'lists', label: 'Listas', icon: Check, roles: ['Super-Administrador', 'Administrador', 'Secretário', 'Professor'] },
-    { id: 'mini-pautas', label: 'Mini Pautas', icon: FileSpreadsheet, roles: ['Super-Administrador', 'Administrador', 'Professor', 'Secretário'] },
-    { id: 'pauta-final', label: 'Pauta Final', icon: GraduationCap, roles: ['Super-Administrador', 'Administrador', 'Professor', 'Secretário'] },
-    { id: 'boletim', label: 'Boletim de Notas', icon: FileDown, roles: ['Super-Administrador', 'Administrador', 'Professor', 'Secretário', 'Aluno'] },
-    { id: 'certificates', label: 'Certificados', icon: Award, roles: ['Super-Administrador', 'Administrador', 'Secretário'] },
-    { id: 'academic', label: 'Académico', icon: BookOpen, roles: ['Super-Administrador', 'Administrador', 'Secretário'] },
-    { id: 'finance', label: 'Finanças', icon: CreditCard, roles: ['Super-Administrador', 'Administrador', 'Financeiro'] },
-    { id: 'teachers', label: 'Professores', icon: UserRound, roles: ['Super-Administrador', 'Administrador', 'Secretário'] },
-    { id: 'users', label: 'Utilizadores', icon: UserCog, roles: ['Super-Administrador', 'Administrador'] },
-    { id: 'backup', label: 'Backup', icon: Database, roles: ['Super-Administrador', 'Administrador'] },
-    { id: 'settings', label: 'Configurações', icon: Settings, roles: ['Super-Administrador', 'Administrador'] },
-    { id: 'profile', label: 'Perfil', icon: UserRound, roles: ['Super-Administrador', 'Administrador', 'Secretário', 'Financeiro', 'Professor', 'Aluno'] },
+    { id: 'dashboard', label: 'Estatística', icon: LayoutDashboard, roles: ['Super-Administrador', 'Administrador', 'Secretário', 'Financeiro', 'Professor'], group: 'Área Administrativa' },
+    { id: 'announcements', label: 'Comunicados', icon: Megaphone, roles: ['Super-Administrador', 'Administrador', 'Secretário', 'Financeiro', 'Professor'], group: 'Geral' },
+    { id: 'schools', label: 'Escolas', icon: SchoolIcon, roles: ['Super-Administrador'], group: 'Geral' },
+    
+    { id: 'students', label: 'Alunos & Matrículas', icon: Users, roles: ['Administrador', 'Secretário'], group: 'Área Académica' },
+    { id: 'teachers', label: 'Professores', icon: UserRound, roles: ['Administrador', 'Secretário'], group: 'Área Académica' },
+    { id: 'classes', label: 'Classes & Turmas', icon: Layers, roles: ['Administrador', 'Secretário', 'Professor'], group: 'Área Académica' },
+    { id: 'lists', label: 'Lançamento de Notas', icon: Check, roles: ['Administrador', 'Secretário', 'Professor'], group: 'Área Académica' },
+    { id: 'exams', label: 'Exames', icon: BookOpen, roles: ['Administrador', 'Secretário', 'Professor'], group: 'Área Académica' },
+    { id: 'mini-pautas', label: 'Mini Pautas', icon: FileSpreadsheet, roles: ['Administrador', 'Professor', 'Secretário'], group: 'Área Académica' },
+    { id: 'pauta-final', label: 'Pautas Finais', icon: GraduationCap, roles: ['Administrador', 'Professor', 'Secretário'], group: 'Área Académica' },
+    { id: 'ai-assistant', label: 'Assistente Pedagógico', icon: Bot, roles: ['Super-Administrador', 'Administrador', 'Professor', 'Secretário'], group: 'Área Académica' },
+    { id: 'boletim', label: 'Boletim de Notas', icon: FileDown, roles: ['Administrador', 'Professor', 'Secretário', 'Aluno'], group: 'Área Académica' },
+    { id: 'certificates', label: 'Certificados & Declarações', icon: Award, roles: ['Administrador', 'Secretário'], group: 'Área Académica' },
+    { id: 'transfers', label: 'Transferências de Alunos', icon: Award, roles: ['Administrador', 'Secretário'], group: 'Área Académica' },
+    { id: 'academic', label: 'Relatório Académico', icon: BookOpen, roles: ['Super-Administrador', 'Administrador', 'Secretário'], group: 'Área Académica' },
+
+    { id: 'users', label: 'Utilizadores & Funcionários', icon: UserCog, roles: ['Super-Administrador', 'Administrador'], group: 'Área Administrativa' },
+    { id: 'finance', label: 'Finanças', icon: CreditCard, roles: ['Financeiro'], group: 'Área Administrativa' },
+    { id: 'calendar', label: 'Calendário Escolar', icon: CalendarDays, roles: ['Administrador'], group: 'Área Administrativa' },
+    { id: 'archive', label: 'Arquivo Digital', icon: Archive, roles: ['Super-Administrador', 'Administrador'], group: 'Área Administrativa' },
+    { id: 'backup', label: 'Backup do Sistema', icon: Database, roles: ['Super-Administrador'], group: 'Área Administrativa' },
+    { id: 'audit', label: 'Auditoria de Acesso', icon: History, roles: ['Super-Administrador'], group: 'Área Administrativa' },
+
+    { id: 'settings', label: 'Dados da Escola & Anos', icon: Settings, roles: ['Administrador'], group: 'Área de Configuração' },
+    { id: 'profile', label: 'Perfil e Preferências', icon: UserRound, roles: ['Super-Administrador', 'Administrador', 'Secretário', 'Financeiro', 'Professor', 'Aluno'], group: 'Área de Configuração' },
   ];
 
   const navItems = allNavItems.filter(item => item.roles.includes(userRole));
@@ -884,7 +1994,7 @@ export default function App() {
         students={students} 
         classes={classes} 
         grades={grades}
-        onUpdateGrades={(newGrades) => setGrades(newGrades)}
+        onUpdateGrades={onUpdateGrades}
         getGrade={getGrade}
         schoolSettings={schoolSettings}
         setSchoolSettings={setSchoolSettings}
@@ -929,8 +2039,15 @@ export default function App() {
       >
         <div className="p-6 flex items-center justify-between border-b border-blue-800">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-500 rounded-xl flex items-center justify-center text-white shrink-0 shadow-lg shadow-blue-400/20">
-              <GraduationCap size={24} />
+            <div className={cn(
+              "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-lg",
+              schoolSettings.logoBase64 ? "bg-white p-1" : "bg-blue-500 text-white shadow-blue-400/20"
+            )}>
+              {schoolSettings.logoBase64 ? (
+                <img src={schoolSettings.logoBase64} alt="Escola" className="w-full h-full object-contain" />
+              ) : (
+                <GraduationCap size={24} />
+              )}
             </div>
             {(sidebarOpen || isMobile) && (
               <div className="overflow-hidden whitespace-nowrap">
@@ -947,7 +2064,29 @@ export default function App() {
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {navItems.map((item) => (
+          {currentUser?.role === 'Administrador' && (sidebarOpen || isMobile) && (
+            <div className="mb-4 space-y-1">
+              <label className="text-[10px] uppercase tracking-widest font-bold text-blue-300 ml-1">Filtro de Navegação</label>
+              <select
+                value={navFilter}
+                onChange={(e) => setNavFilter(e.target.value)}
+                className="w-full bg-blue-800/50 text-white text-sm rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-400 border-none font-semibold cursor-pointer appearance-none"
+              >
+                <option value="Todas">Todas as Áreas</option>
+                <option value="Geral">Geral</option>
+                <option value="Área Académica">Área Académica</option>
+                <option value="Área Administrativa">Área Administrativa</option>
+                <option value="Área de Configuração">Área de Configuração</option>
+              </select>
+            </div>
+          )}
+          {navItems
+            .filter(item => {
+              if (currentUser?.role !== 'Administrador') return true;
+              if (navFilter === 'Todas') return true;
+              return item.group === navFilter || !item.group;
+            })
+            .map((item) => (
             <button
               key={item.id}
               onClick={() => {
@@ -983,22 +2122,22 @@ export default function App() {
           ))}
         </nav>
 
-        {!isMobile && (
-          <div className="p-4 border-t border-blue-800 space-y-1">
-            <button 
-              onClick={() => window.open('https://wa.me/244932590171', '_blank')}
-              className="w-full flex items-center gap-3 p-3 text-emerald-400 hover:bg-emerald-500/10 rounded-xl transition-all font-semibold"
-            >
-              <Phone size={20} />
-              {sidebarOpen && <span>Suporte WhatsApp</span>}
-            </button>
-            <button 
-              onClick={handleLogout}
-              className="w-full flex items-center gap-3 p-3 text-red-400 hover:bg-red-500/10 rounded-xl transition-all font-semibold"
-            >
-              <LogOut size={20} />
-              {sidebarOpen && <span>Sair do Sistema</span>}
-            </button>
+        <div className="p-4 border-t border-blue-800 space-y-1">
+          <button 
+            onClick={() => window.open('https://wa.me/244932590171', '_blank')}
+            className="w-full flex items-center gap-3 p-3 text-emerald-400 hover:bg-emerald-500/10 rounded-xl transition-all font-semibold"
+          >
+            <Phone size={20} />
+            {(sidebarOpen || isMobile) && <span>Suporte WhatsApp</span>}
+          </button>
+          <button 
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 p-3 text-red-400 hover:bg-red-500/10 rounded-xl transition-all font-semibold"
+          >
+            <LogOut size={20} />
+            {(sidebarOpen || isMobile) && <span>Sair do Sistema</span>}
+          </button>
+          {!isMobile && (
             <button 
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="w-full flex items-center gap-3 p-3 text-blue-200 hover:text-white transition-colors"
@@ -1006,8 +2145,8 @@ export default function App() {
               {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
               {sidebarOpen && <span>Recolher Menu</span>}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </aside>
 
       {/* Main Content */}
@@ -1084,6 +2223,35 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-6">
+            {/* Connection & Sync Status Indicator */}
+            <button 
+              onClick={() => setIsSyncModalOpen(true)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-2xl border transition-all active:scale-95 text-xs font-black tracking-tight shadow-sm cursor-pointer ${
+                isOnline && !isSimulatedOffline
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100/80'
+                  : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100/80 animate-pulse'
+              }`}
+              title="Estado de Ligação e Sincronização"
+            >
+              {isOnline && !isSimulatedOffline ? (
+                <>
+                  <Wifi size={14} className="text-emerald-500 animate-bounce" />
+                  <span className="hidden sm:inline">Online</span>
+                  {isSyncing && <RefreshCw size={12} className="animate-spin text-emerald-500 ml-1" />}
+                </>
+              ) : (
+                <>
+                  <WifiOff size={14} className="text-amber-500" />
+                  <span>Offline</span>
+                  {syncQueue.length > 0 && (
+                    <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-black animate-bounce ml-1">
+                      {syncQueue.length}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+
             {currentUser?.role === 'Super-Administrador' ? (
               <div className="flex items-center gap-2 bg-neutral-50 px-3 py-1.5 rounded-2xl border border-neutral-200">
                 <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest hidden lg:inline ml-1">Escola Activa:</span>
@@ -1122,19 +2290,66 @@ export default function App() {
                 <p className="text-sm font-bold text-neutral-900 leading-none">{currentUser?.name || 'Administrador'}</p>
                 <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-tighter mt-1">Nível de Acesso Total</p>
               </div>
+              <div className="w-10 h-10 rounded-xl bg-neutral-100 border-2 border-white shadow-sm overflow-hidden ring-1 ring-neutral-200">
+                <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser?.name || 'Admin')}&background=random`} alt="Admin" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+              </div>
               <button 
                 onClick={handleLogout}
-                className="w-10 h-10 rounded-xl bg-neutral-100 border-2 border-white shadow-sm overflow-hidden ring-1 ring-neutral-200 group relative"
+                className="px-4 py-2.5 bg-rose-50 border border-rose-200 text-rose-600 rounded-2xl font-black text-xs hover:bg-rose-100 hover:text-rose-700 transition-all active:scale-95 flex items-center gap-2"
                 title="Sair do Sistema"
               >
-                <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser?.name || 'Admin')}&background=random`} alt="Admin" referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:opacity-20 transition-opacity" />
-                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <LogOut size={16} className="text-red-600" />
-                </div>
+                <LogOut size={14} />
+                <span>Sair</span>
               </button>
             </div>
           </div>
         </header>
+
+        {showSubscriptionAlert && (
+          <div className="mx-4 sm:mx-6 lg:mx-8 mt-6 p-4 rounded-2xl border border-rose-200 bg-rose-50 flex items-start gap-4 shadow-sm">
+            <div className="p-2 bg-rose-100 rounded-xl text-rose-600 shrink-0">
+              <ShieldAlert size={24} />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-bold text-rose-900 mb-1">
+                Atenção: A assinatura da sua instituição encontra-se {currentSchool?.subscription?.status === 'Expirada' ? 'expirada' : 'pendente'}.
+              </h3>
+              <p className="text-xs font-medium text-rose-700 leading-relaxed mb-3">
+                Algumas funcionalidades do sistema foram temporariamente restritas. Por favor, regularize a sua subscrição ({currentSchool?.subscription?.plan || 'N/A'}) para restaurar o acesso total.
+              </p>
+              <button
+                onClick={async () => {
+                  if (currentSchool) {
+                    const updatedSchool: School = {
+                      ...currentSchool,
+                      subscription: {
+                        plan: currentSchool.subscription?.plan || 'Mensal',
+                        startDate: currentSchool.subscription?.startDate || new Date().toISOString().split('T')[0],
+                        endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                        status: 'Activa'
+                      }
+                    };
+                    const updatedSchools = schools.map(s => s.id === currentSchool.id ? updatedSchool : s);
+                    setSchools(updatedSchools);
+                    localStorage.setItem('edugest_schools', JSON.stringify(updatedSchools));
+                    showToast('Assinatura activada com sucesso! Todas as funcionalidades foram restauradas.', 'success');
+                    try {
+                      await pushItemToSupabaseWithRetry({
+                        type: 'ACTUALIZAR_ESCOLA',
+                        data: updatedSchool
+                      });
+                    } catch (e) {
+                      console.error('Erro ao sincronizar activação de escola:', e);
+                    }
+                  }
+                }}
+                className="px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-black hover:bg-rose-700 transition-all active:scale-95 shadow-md shadow-rose-600/10 inline-flex items-center gap-2"
+              >
+                Activar Assinatura Agora
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto w-full">
           <AnimatePresence mode="wait">
@@ -1154,6 +2369,18 @@ export default function App() {
                   getGrade={getGrade}
                   isMobile={isMobile}
                   setActiveView={setActiveView}
+                  currentUser={currentUser}
+                />
+              )}
+              {activeView === 'announcements' && (
+                <AnnouncementsView
+                  announcements={announcements}
+                  setAnnouncements={setAnnouncements}
+                  currentUser={currentUser!}
+                  currentSchoolId={currentSchoolId}
+                  users={users}
+                  showToast={showToast}
+                  queueSyncAction={queueSyncAction}
                 />
               )}
               {activeView === 'students' && (
@@ -1161,15 +2388,17 @@ export default function App() {
                   students={filteredStudents} 
                   classes={filteredClasses} 
                   grades={filteredGrades}
-                  onAddStudent={currentUser?.role !== 'Professor' ? (s) => {
+                  onAddStudent={(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') && hasActiveSubscription ? (s) => {
                     setStudents([...students, { ...s, schoolId: currentSchoolId || '' }]);
                     showToast('Aluno matriculado com sucesso');
+                    queueSyncAction('CADASTRAR_ALUNO', `Matrícula do aluno "${s.name}"`, s);
                   } : undefined}
-                  onUpdateStudent={(s) => {
+                  onUpdateStudent={hasActiveSubscription ? (s) => {
                     setStudents(students.map(item => item.id === s.id ? { ...s, schoolId: s.schoolId || currentSchoolId || '' } : item));
                     showToast('Dados do aluno actualizados');
-                  }}
-                  onDeleteStudent={currentUser?.role !== 'Professor' ? onDeleteStudent : undefined}
+                    queueSyncAction('ACTUALIZAR_ALUNO', `Dados de "${s.name}" actualizados`, s);
+                  } : undefined}
+                  onDeleteStudent={currentUser?.role !== 'Professor' && hasActiveSubscription ? onDeleteStudent : undefined}
                   getGrade={getGrade}
                   setActiveView={setActiveView}
                   isAdding={isAddingStudent}
@@ -1177,16 +2406,69 @@ export default function App() {
                   editingStudent={editingStudent}
                   setEditingStudent={setEditingStudent}
                   currentUser={currentUser || undefined}
-                  onImportStudents={(importedStudents) => {
-                    const newStudents: Student[] = importedStudents.map(s => ({
-                      ...s,
-                      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-                      enrollmentDate: new Date().toISOString(),
-                      schoolId: currentSchoolId || ''
-                    }));
+                  onImportStudents={hasActiveSubscription ? (importedStudents) => {
+                    const createdClassesMap: { [key: string]: string } = {};
+                    const newClassesToAdd: Class[] = [];
+
+                    importedStudents.forEach(s => {
+                      if (s.classId && s.classId.startsWith('new_')) {
+                        const originalClassName = s.classId.substring(4);
+                        if (!createdClassesMap[originalClassName]) {
+                          const newId = 'c_' + Math.random().toString(36).substr(2, 9);
+                          createdClassesMap[originalClassName] = newId;
+                          
+                          let guessedLevel = '7ª Classe';
+                          const levelMatch = originalClassName.match(/(\d+)\s*ª?/);
+                          if (levelMatch) {
+                            guessedLevel = `${levelMatch[1]}ª Classe`;
+                          }
+
+                          const newClassObj: Class = {
+                            id: newId,
+                            name: originalClassName,
+                            level: guessedLevel,
+                            shift: 'Manhã',
+                            room: 'N/A',
+                            capacity: 40,
+                            subjects: getSubjectsByLevel(guessedLevel) || [],
+                            schoolId: currentSchoolId || 's1'
+                          };
+                          newClassesToAdd.push(newClassObj);
+                        }
+                      }
+                    });
+
+                    if (newClassesToAdd.length > 0) {
+                      setClasses(prev => [...prev, ...newClassesToAdd]);
+                      newClassesToAdd.forEach(cls => {
+                        queueSyncAction('CRIAR_TURMA', `Turma "${cls.name}" criada automaticamente durante importação`, cls);
+                      });
+                    }
+
+                    const newStudents: Student[] = importedStudents.map(s => {
+                      let resolvedClassId = s.classId;
+                      if (s.classId && s.classId.startsWith('new_')) {
+                        const originalClassName = s.classId.substring(4);
+                        resolvedClassId = createdClassesMap[originalClassName] || '';
+                      }
+
+                      return {
+                        ...s,
+                        classId: resolvedClassId,
+                        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                        enrollmentDate: new Date().toISOString(),
+                        schoolId: currentSchoolId || ''
+                      };
+                    });
+
                     setStudents([...students, ...newStudents]);
-                    showToast(`${newStudents.length} alunos importados com sucesso`);
-                  }}
+                    if (newClassesToAdd.length > 0) {
+                      showToast(`${newStudents.length} alunos importados e ${newClassesToAdd.length} novas turmas criadas com sucesso!`, 'success');
+                    } else {
+                      showToast(`${newStudents.length} alunos importados com sucesso!`, 'success');
+                    }
+                    queueSyncAction('IMPORTAR_ALUNOS', `Importação de ${newStudents.length} alunos`, newStudents);
+                  } : undefined}
                 />
               )}
               {activeView === 'academic' && (
@@ -1194,14 +2476,20 @@ export default function App() {
                   classes={filteredClasses} 
                   students={filteredStudents}
                   grades={filteredGrades}
-                  onUpdateGrades={onUpdateGrades}
+                  onUpdateGrades={hasActiveSubscription ? (newGrades) => {
+                    onUpdateGrades(newGrades);
+                    queueSyncAction('ACTUALIZAR_NOTAS', `Actualização de pauta de notas`, newGrades);
+                  } : undefined}
                   getGrade={getGrade}
                   teachers={filteredTeachers}
-                  onUpdateTeachers={(newTeachers) => {
+                  onUpdateTeachers={hasActiveSubscription ? (newTeachers) => {
                     const otherSchoolsTeachers = teachers.filter(t => t.schoolId !== currentSchoolId);
                     const withSchoolId = newTeachers.map(t => ({ ...t, schoolId: currentSchoolId || t.schoolId || 's1' }));
                     setTeachers([...otherSchoolsTeachers, ...withSchoolId]);
-                  }}
+                    queueSyncAction('ACTUALIZAR_PROFESSORES', `Lista de professores actualizada`, newTeachers);
+                  } : undefined}
+                  schoolSettings={schoolSettings}
+                  showToast={showToast}
                 />
               )}
               {activeView === 'finance' && (
@@ -1210,42 +2498,63 @@ export default function App() {
                   payments={filteredPayments}
                   expenses={filteredExpenses}
                   classes={filteredClasses}
-                  onAddPayment={(p) => setPayments([...payments, { ...p, schoolId: currentSchoolId || '' }])}
-                  onAddExpense={(exp) => setExpenses([...expenses, { ...exp, schoolId: currentSchoolId || '' }])}
-                  onDeleteExpense={(id) => setExpenses(expenses.filter(e => e.id !== id))}
-                  onUpdateExpense={(exp) => setExpenses(expenses.map(item => item.id === exp.id ? { ...exp, schoolId: exp.schoolId || currentSchoolId || '' } : item))}
+                  onAddPayment={hasActiveSubscription ? (p) => {
+                    setPayments(prev => [...prev, { ...p, schoolId: currentSchoolId || '' }]);
+                    queueSyncAction('REGISTAR_PAGAMENTO', `Pagamento de MZN ${p.amount} (${p.service}) registado para o aluno`, p);
+                  } : undefined}
+                  onAddExpense={hasActiveSubscription ? (exp) => {
+                    setExpenses(prev => [...prev, { ...exp, schoolId: currentSchoolId || '' }]);
+                    queueSyncAction('REGISTAR_DESPESA', `Despesa "${exp.description}" (${exp.amount} MZN) registada`, exp);
+                  } : undefined}
+                  onDeleteExpense={hasActiveSubscription ? (id) => {
+                    setExpenses(prev => prev.filter(e => e.id !== id));
+                    queueSyncAction('ELIMINAR_DESPESA', `Despesa ID: ${id} eliminada`, { id });
+                  } : undefined}
+                  onUpdateExpense={hasActiveSubscription ? (exp) => {
+                    setExpenses(prev => prev.map(item => item.id === exp.id ? { ...exp, schoolId: exp.schoolId || currentSchoolId || '' } : item));
+                    queueSyncAction('ACTUALIZAR_DESPESA', `Despesa "${exp.description}" actualizada`, exp);
+                  } : undefined}
                   confirmAction={confirmAction}
                   currentUser={currentUser}
+                  schoolName={schools.find(s => s.id === currentSchoolId)?.name}
+                  schoolSettings={schoolSettings}
                 />
+              )}
+              {activeView === 'ai-assistant' && (
+                <AiAssistantView currentUser={currentUser} />
               )}
               {activeView === 'teachers' && (
                 <TeachersView 
                   teachers={filteredTeachers} 
                   classes={filteredClasses}
-                  onAddTeacher={(t) => {
+                  onAddTeacher={hasActiveSubscription ? (t) => {
                     setTeachers([...teachers, { ...t, schoolId: currentSchoolId || '' }]);
                     showToast('Professor cadastrado com sucesso');
-                  }}
-                  onUpdateTeacher={(t) => {
+                    queueSyncAction('CADASTRAR_PROFESSOR', `Cadastro do professor "${t.name}"`, t);
+                  } : undefined}
+                  onUpdateTeacher={hasActiveSubscription ? (t) => {
                     setTeachers(teachers.map(item => item.id === t.id ? { ...t, schoolId: t.schoolId || currentSchoolId || '' } : item));
                     showToast('Dados do professor actualizados');
-                  }}
-                  onDeleteTeacher={onDeleteTeacher}
+                    queueSyncAction('ACTUALIZAR_PROFESSOR', `Dados de "${t.name}" actualizados`, t);
+                  } : undefined}
+                  onDeleteTeacher={hasActiveSubscription ? onDeleteTeacher : undefined}
                   showToast={showToast}
                 />
               )}
               {activeView === 'classes' && (
                 <ClassesView 
                   classes={filteredClasses} 
-                  onAddClass={(c) => {
+                  onAddClass={(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') && hasActiveSubscription ? (c) => {
                     setClasses([...classes, { ...c, schoolId: currentSchoolId || '' }]);
                     showToast('Turma criada com sucesso');
-                  }}
-                  onUpdateClass={(c) => {
+                    queueSyncAction('CRIAR_TURMA', `Criação da turma "${c.name}"`, c);
+                  } : undefined}
+                  onUpdateClass={hasActiveSubscription ? (c) => {
                     setClasses(classes.map(item => item.id === c.id ? { ...c, schoolId: c.schoolId || currentSchoolId || '' } : item));
                     showToast('Dados da turma actualizados');
-                  }}
-                  onDeleteClass={onDeleteClass}
+                    queueSyncAction('ACTUALIZAR_TURMA', `Dados da turma "${c.name}" actualizados`, c);
+                  } : undefined}
+                  onDeleteClass={hasActiveSubscription ? onDeleteClass : undefined}
                   students={filteredStudents}
                   setActiveView={setActiveView}
                   setSelectedListClassId={setSelectedListClassId}
@@ -1263,11 +2572,11 @@ export default function App() {
                   setActiveView={setActiveView}
                   schoolSettings={schoolSettings}
                   setSchoolSettings={setSchoolSettings}
-                  onEditStudent={(student) => {
+                  onEditStudent={hasActiveSubscription ? (student) => {
                     setEditingStudent(student);
                     setActiveView('students');
-                  }}
-                  onDeleteStudent={currentUser?.role !== 'Professor' ? onDeleteStudent : undefined}
+                  } : undefined}
+                  onDeleteStudent={currentUser?.role !== 'Professor' && hasActiveSubscription ? onDeleteStudent : undefined}
                   onExportPDF={exportClassStudentListPDF}
                 />
               )}
@@ -1281,6 +2590,7 @@ export default function App() {
                   schoolSettings={schoolSettings}
                   setSchoolSettings={setSchoolSettings}
                   currentUser={currentUser}
+                  showToast={showToast}
                 />
               )}
               {activeView === 'pauta-final' && (
@@ -1301,12 +2611,13 @@ export default function App() {
               )}
               {activeView === 'boletim' && (
                 <BoletimView 
-                  students={filteredStudents}
+                  students={currentUser?.role === 'Aluno' ? filteredStudents.filter(s => s.id === currentUser.studentId || s.name === currentUser.name) : filteredStudents}
                   classes={filteredClasses}
                   grades={filteredGrades}
                   getGrade={getGrade}
                   schoolSettings={schoolSettings}
                   setSchoolSettings={setSchoolSettings}
+                  currentUser={currentUser}
                 />
               )}
               {activeView === 'certificates' && (
@@ -1314,11 +2625,11 @@ export default function App() {
                   students={filteredStudents}
                   classes={filteredClasses}
                   templates={filteredTemplates}
-                  onUpdateTemplates={(newTemplates) => {
+                  onUpdateTemplates={hasActiveSubscription ? (newTemplates) => {
                     const otherSchoolsTemplates = templates.filter(t => t.schoolId !== currentSchoolId);
                     const withSchoolId = newTemplates.map(t => ({ ...t, schoolId: currentSchoolId || t.schoolId || 's1' }));
                     setTemplates([...otherSchoolsTemplates, ...withSchoolId]);
-                  }}
+                  } : undefined}
                   schoolSettings={schoolSettings}
                   initialStudentId={certInitData.studentId}
                   initialTab={certInitData.tab}
@@ -1329,13 +2640,14 @@ export default function App() {
               {activeView === 'users' && (
                 <UsersView 
                   users={filteredUsers}
-                  onAddUser={onAddUser}
-                  onUpdateUser={onUpdateUser}
-                  onDeleteUser={onDeleteUser}
+                  onAddUser={hasActiveSubscription ? onAddUser : undefined}
+                  onUpdateUser={hasActiveSubscription ? onUpdateUser : undefined}
+                  onDeleteUser={hasActiveSubscription ? onDeleteUser : undefined}
                   showToast={showToast}
                   currentUser={currentUser}
                   schools={schools}
                   classes={classes}
+                  students={students}
                 />
               )}
               {activeView === 'profile' && (
@@ -1345,6 +2657,7 @@ export default function App() {
                   setUsers={setUsers}
                   setCurrentUser={setCurrentUser}
                   showToast={showToast}
+                  onUpdateUser={onUpdateUser}
                 />
               )}
 
@@ -1367,13 +2680,26 @@ export default function App() {
                 />
               )}
 
+              {activeView === 'audit' && (
+                <AuditView 
+                  logs={auditLogs}
+                  onClearLogs={() => {
+                    setAuditLogs([]);
+                    localStorage.removeItem('edugest_audit_logs');
+                    showToast('Histórico de auditoria limpo com sucesso', 'success');
+                  }}
+                />
+              )}
+
               {activeView === 'settings' && (
                 <SettingsView 
                   schoolSettings={schoolSettings}
+                  showToast={showToast}
                   setSchoolSettings={(newSettings) => {
                     setSchoolSettings(newSettings);
+                    localStorage.setItem('edugest_school_settings', JSON.stringify(newSettings));
                     if (currentSchoolId) {
-                      setSchools(schools.map(s => s.id === currentSchoolId ? {
+                      const updatedSchools = schools.map(s => s.id === currentSchoolId ? {
                         ...s,
                         name: newSettings.nomeEscola,
                         republica: newSettings.republica,
@@ -1381,10 +2707,29 @@ export default function App() {
                         administracaoMunicipal: newSettings.administracaoMunicipal,
                         direccaoMunicipal: newSettings.direccaoMunicipal,
                         anoLectivo: newSettings.anoLectivo,
-                      } : s));
+                        logoBase64: newSettings.logoBase64,
+                      } : s);
+                      setSchools(updatedSchools);
+                      localStorage.setItem('edugest_schools', JSON.stringify(updatedSchools));
+                      pushItemToSupabaseWithRetry({
+                        type: 'ACTUALIZAR_ESCOLA',
+                        data: updatedSchools.find(s => s.id === currentSchoolId)
+                      }).catch(e => console.error(e));
                     }
                   }}
                 />
+              )}
+              {activeView === 'calendar' && (
+                <CalendarView />
+              )}
+              {activeView === 'archive' && (
+                <ArchiveView />
+              )}
+              {activeView === 'exams' && (
+                <ExamsView classes={filteredClasses} students={filteredStudents} />
+              )}
+              {activeView === 'transfers' && (
+                <TransfersView students={filteredStudents} />
               )}
             </motion.div>
           </AnimatePresence>
@@ -1408,6 +2753,346 @@ export default function App() {
         onConfirm={confirmDialog.onConfirm}
         onCancel={confirmDialog.onCancel}
       />
+
+      {/* Offline & Sync Modal */}
+      {isSyncModalOpen && (
+        <div className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden shadow-2xl border border-neutral-100 animate-scale-up">
+            {/* Header */}
+            <div className="p-6 border-b border-neutral-100 flex items-center justify-between bg-gradient-to-r from-emerald-500/5 to-blue-500/5">
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-xl ${isOnline && !isSimulatedOffline ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                  {isOnline && !isSimulatedOffline ? <Wifi size={22} className="animate-pulse" /> : <WifiOff size={22} />}
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-neutral-900">Integração Supabase Cloud</h3>
+                  <p className="text-xs text-neutral-500">Tecnologia Offline-First & Sincronização em Tempo Real</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsSyncModalOpen(false)}
+                className="p-2 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50 rounded-xl transition-all cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Navigation Tabs */}
+            <div className="flex border-b border-neutral-100 px-6 bg-neutral-50/50">
+              <button
+                onClick={() => setSyncModalTab('status')}
+                className={`py-3.5 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
+                  syncModalTab === 'status' 
+                    ? 'border-emerald-600 text-emerald-700' 
+                    : 'border-transparent text-neutral-400 hover:text-neutral-600'
+                }`}
+              >
+                Conectividade & Fila ({syncQueue.length})
+              </button>
+              <button
+                onClick={() => setSyncModalTab('data')}
+                className={`py-3.5 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
+                  syncModalTab === 'data' 
+                    ? 'border-emerald-600 text-emerald-700' 
+                    : 'border-transparent text-neutral-400 hover:text-neutral-600'
+                }`}
+              >
+                Transferência de Dados
+              </button>
+              <button
+                onClick={() => setSyncModalTab('sql')}
+                className={`py-3.5 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
+                  syncModalTab === 'sql' 
+                    ? 'border-emerald-600 text-emerald-700' 
+                    : 'border-transparent text-neutral-400 hover:text-neutral-600'
+                }`}
+              >
+                Script SQL (Supabase)
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1">
+              {syncModalTab === 'status' && (
+                <>
+                  {/* Connection Toggle Panel */}
+                  <div className="p-5 bg-neutral-50 rounded-3xl border border-neutral-200/80 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-xs font-black text-neutral-400 uppercase tracking-wider">Simulador de Conectividade</h4>
+                        <p className="text-sm font-bold text-neutral-800 mt-1">
+                          Estado: {isOnline && !isSimulatedOffline ? (
+                            <span className="text-emerald-600 font-black">LIGADO À INTERNET (Nuvem Activa)</span>
+                          ) : (
+                            <span className="text-amber-600 font-black">OFFLINE (Modo Local Seguro)</span>
+                          )}
+                        </p>
+                      </div>
+                      {/* Custom Toggle Switch */}
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input 
+                          type="checkbox" 
+                          checked={!isSimulatedOffline}
+                          onChange={(e) => {
+                            const newOnlineState = !e.target.checked;
+                            setIsSimulatedOffline(newOnlineState);
+                            showToast(newOnlineState ? 'Modo Offline Simulado Activo' : 'Ligação restaurada, a reconectar...', 'info');
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-neutral-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                      </label>
+                    </div>
+                    <p className="text-xs text-neutral-500 leading-relaxed">
+                      Use o interruptor acima para simular a perda de ligação à Internet. Quando estiver Offline, todas as suas ações (matrículas, pautas, pagamentos) serão guardadas de forma segura localmente no navegador e enviadas automaticamente quando voltar Online.
+                    </p>
+                  </div>
+
+                  {/* Sync Queue List */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-black text-neutral-400 uppercase tracking-wider">Fila de Alterações Locais ({syncQueue.length})</h4>
+                      {syncQueue.length > 0 && (
+                        <button 
+                          onClick={() => {
+                            confirmAction(
+                              'Limpar Fila de Alterações',
+                              'Tem a certeza de que deseja limpar a fila local? Todas as alterações feitas offline serão descartadas permanentemente.',
+                              () => {
+                                setSyncQueue([]);
+                                localStorage.removeItem('edugest_sync_queue');
+                                showToast('Fila de alterações limpa', 'warning');
+                              }
+                            );
+                          }}
+                          className="text-[10px] font-black text-rose-600 hover:underline uppercase tracking-wider cursor-pointer"
+                        >
+                          Limpar Fila
+                        </button>
+                      )}
+                    </div>
+
+                    {syncQueue.length > 0 ? (
+                      <div className="border border-neutral-100 rounded-3xl divide-y divide-neutral-100 max-h-48 overflow-y-auto">
+                        {syncQueue.map((item) => (
+                          <div key={item.id} className="p-3.5 flex items-center justify-between bg-white hover:bg-neutral-50/50 transition-colors">
+                            <div className="space-y-1">
+                              <p className="text-xs font-bold text-neutral-800">{item.description}</p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9px] font-black bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded-md uppercase">
+                                  {item.type}
+                                </span>
+                                <span className="text-[10px] text-neutral-400 font-medium">
+                                  {item.timestamp}
+                                </span>
+                              </div>
+                            </div>
+                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-6 bg-emerald-50/50 border border-emerald-100/80 rounded-3xl text-center space-y-2">
+                        <CheckCircle2 size={32} className="text-emerald-500 mx-auto" />
+                        <p className="text-xs font-bold text-emerald-800">Tudo Sincronizado!</p>
+                        <p className="text-[11px] text-emerald-600">Todas as operações estão gravadas em segurança na base de dados central do Supabase.</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {syncModalTab === 'data' && (
+                <div className="space-y-5">
+                  <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-3xl">
+                    <p className="text-xs font-bold text-emerald-800">Conexão Estabelecida com o Supabase</p>
+                    <p className="text-[11px] text-emerald-600 mt-0.5">URL: {SUPABASE_URL}</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Export Card */}
+                    <div className="p-5 bg-white border border-neutral-200/80 rounded-3xl space-y-3 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="p-2 w-max bg-blue-50 text-blue-600 rounded-xl">
+                          <Upload size={18} />
+                        </div>
+                        <h4 className="text-sm font-black text-neutral-900">Exportar para o Supabase</h4>
+                        <p className="text-xs text-neutral-500 leading-relaxed">
+                          Semeia todo o armazenamento local atual (escolas, turmas, alunos, notas, despesas e pagamentos) diretamente para as tabelas no Supabase.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          confirmAction(
+                            'Sincronizar e Exportar tudo',
+                            'Esta ação irá enviar todos os seus dados locais para o Supabase, integrando com as tabelas na nuvem. Deseja continuar?',
+                            handleExportAllToSupabase
+                          );
+                        }}
+                        disabled={isSyncing}
+                        className="w-full mt-2 py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-xs transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        <Upload size={12} />
+                        <span>Semeador (Exportar Tudo)</span>
+                      </button>
+                    </div>
+
+                    {/* Import Card */}
+                    <div className="p-5 bg-white border border-neutral-200/80 rounded-3xl space-y-3 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="p-2 w-max bg-emerald-50 text-emerald-600 rounded-xl">
+                          <Download size={18} />
+                        </div>
+                        <h4 className="text-sm font-black text-neutral-900">Importar do Supabase</h4>
+                        <p className="text-xs text-neutral-500 leading-relaxed">
+                          Puxa e atualiza todo o seu painel de administração local com os dados reais salvos no seu banco de dados relacional em nuvem.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          confirmAction(
+                            'Importar todos os dados',
+                            'Tem a certeza de que deseja carregar os dados do Supabase? Isto irá atualizar os dados no seu navegador para corresponder à nuvem.',
+                            handleImportAllFromSupabase
+                          );
+                        }}
+                        disabled={isSyncing}
+                        className="w-full mt-2 py-2 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        <Download size={12} />
+                        <span>Sincronizar (Importar Tudo)</span>
+                      </button>
+                    </div>
+
+                    {/* Clear All Database Data (Começar do Zero) */}
+                    <div className="p-5 bg-rose-50/50 border border-rose-200 rounded-3xl space-y-3 shadow-sm hover:shadow-md transition-all flex flex-col justify-between sm:col-span-2">
+                      <div className="space-y-2">
+                        <div className="p-2 w-max bg-rose-100 text-rose-600 rounded-xl">
+                          <Trash2 size={18} />
+                        </div>
+                        <h4 className="text-sm font-black text-rose-950">Limpar Banco de Dados (Recomeçar do Zero)</h4>
+                        <p className="text-xs text-rose-800 leading-relaxed">
+                          Esta ação irá <span className="font-bold">eliminar permanentemente</span> todos os dados de escolas, turmas, alunos, professores, pautas, pagamentos e despesas tanto no Supabase quanto localmente neste navegador. Use esta opção para iniciar novos cadastros do zero.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          confirmAction(
+                            'LIMPAR BANCO DE DADOS E DADOS LOCAIS',
+                            'ATENÇÃO EXTREMA: Esta acção é irreversível! Irá apagar todos os dados de escolas, turmas, alunos e demais registos na base de dados do Supabase e no armazenamento local deste navegador. Deseja prosseguir?',
+                            handleClearAllSupabaseData
+                          );
+                        }}
+                        disabled={isSyncing}
+                        className="w-full mt-2 py-2 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-black text-xs transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-sm"
+                      >
+                        <Trash2 size={12} />
+                        <span>Limpar Toda a Base de Dados (Remoto + Local)</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {syncModalTab === 'sql' && (
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-black text-neutral-800 uppercase tracking-wider">Passo Único: Configuração SQL no Supabase</h4>
+                    <p className="text-[11px] text-neutral-500 leading-relaxed">
+                      Para que as operações em nuvem funcionem perfeitamente, copie o código abaixo e execute-o na aba <span className="font-bold">SQL Editor</span> no painel do seu projeto do Supabase. Isso criará todas as tabelas com suporte relacional e as regras de segurança apropriadas.
+                    </p>
+                  </div>
+
+                  <div className="relative">
+                    <pre className="p-4 bg-neutral-900 text-neutral-200 text-[10px] font-mono rounded-2xl max-h-56 overflow-y-auto whitespace-pre leading-relaxed select-text border border-neutral-800">
+                      {SUPABASE_SQL_SCHEMA}
+                    </pre>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(SUPABASE_SQL_SCHEMA);
+                        showToast('Script SQL copiado para a área de transferência!', 'success');
+                      }}
+                      className="absolute top-3 right-3 p-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white rounded-xl transition-all cursor-pointer border border-neutral-700 active:scale-95 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider"
+                      title="Copiar Script"
+                    >
+                      <Copy size={12} />
+                      <span>Copiar</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-neutral-50 border-t border-neutral-100 flex items-center justify-end gap-3">
+              <button 
+                onClick={() => setIsSyncModalOpen(false)}
+                className="px-4 py-2.5 bg-white border border-neutral-200 text-neutral-700 rounded-2xl font-bold text-xs hover:bg-neutral-50 transition-all cursor-pointer"
+              >
+                Fechar
+              </button>
+              {syncQueue.length > 0 && syncModalTab === 'status' && (
+                <button 
+                  onClick={async () => {
+                    if (!isOnline || isSimulatedOffline) {
+                      showToast('Impossível sincronizar. Ligue-se à internet primeiro!', 'error');
+                      return;
+                    }
+                    setIsSyncing(true);
+                    showToast('Sincronização manual iniciada...', 'info');
+                    
+                    const cleanQueue = validateAndCleanSyncQueue(syncQueue);
+                    if (cleanQueue.length !== syncQueue.length) {
+                      setSyncQueue(cleanQueue);
+                      localStorage.setItem('edugest_sync_queue', JSON.stringify(cleanQueue));
+                    }
+
+                    let successCount = 0;
+                    const failedItems = [];
+                    
+                    for (const item of cleanQueue) {
+                      try {
+                        await pushItemToSupabaseWithRetry({ type: item.type, data: item.data }, 3, 1000, 8000);
+                        successCount++;
+                      } catch (e) {
+                        console.error(`Erro na sincronização manual para o item ${item.id}:`, e);
+                        failedItems.push(item);
+                      }
+                    }
+                    
+                    setSyncQueue(failedItems);
+                    setIsSyncing(false);
+                    
+                    if (failedItems.length > 0) {
+                      localStorage.setItem('edugest_sync_queue', JSON.stringify(failedItems));
+                      showToast(`Sincronização parcial: ${failedItems.length} restantes.`, 'warning');
+                      setSyncRetryCount(prev => prev + 1);
+                    } else {
+                      localStorage.removeItem('edugest_sync_queue');
+                      showToast('Todos os dados sincronizados com sucesso!', 'success');
+                      setSyncRetryCount(0);
+                    }
+                  }}
+                  disabled={isSyncing || !isOnline || isSimulatedOffline}
+                  className="px-4 py-2.5 bg-emerald-600 text-white rounded-2xl font-black text-xs hover:bg-emerald-700 transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2 cursor-pointer shadow-md shadow-emerald-200"
+                >
+                  {isSyncing ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" />
+                      <span>Sincronizando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={14} />
+                      <span>Sincronizar Agora ({syncQueue.length})</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1925,9 +3610,31 @@ interface SchoolSettings {
   nomeEscola: string;
   anoLectivo: string;
   customLevels?: string[];
+  logoBase64?: string;
 }
 
-const loadAngolaInsignia = (): Promise<string | null> => {
+const getImageFormat = (dataUrl: string | null): 'PNG' | 'JPEG' | 'WEBP' => {
+  if (!dataUrl) return 'PNG';
+  if (dataUrl.includes('image/jpeg') || dataUrl.includes('image/jpg')) return 'JPEG';
+  if (dataUrl.includes('image/webp')) return 'WEBP';
+  return 'PNG';
+};
+
+const loadAngolaInsignia = (customLogo?: string): Promise<string | null> => {
+  if (customLogo) {
+    return Promise.resolve(customLogo);
+  }
+  try {
+    const saved = localStorage.getItem('edugest_school_settings');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.logoBase64) {
+        return Promise.resolve(parsed.logoBase64);
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  }
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -1975,8 +3682,8 @@ function OfficialHeader({ settings, setSettings, className, extraInfo }: {
           <div className="space-y-2 bg-neutral-50 p-4 rounded-2xl border border-neutral-200 no-print">
             <div className="flex justify-center mb-2">
               <img 
-                src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Coat_of_arms_of_Angola.svg/200px-Coat_of_arms_of_Angola.svg.png" 
-                alt="Insígnia da República de Angola" 
+                src={localSettings.logoBase64 || "https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Coat_of_arms_of_Angola.svg/200px-Coat_of_arms_of_Angola.svg.png"} 
+                alt="Logomarca" 
                 className="w-12 h-12 object-contain"
                 referrerPolicy="no-referrer"
               />
@@ -2028,8 +3735,8 @@ function OfficialHeader({ settings, setSettings, className, extraInfo }: {
           <div className="cursor-pointer hover:bg-neutral-50 p-4 print:p-0 rounded-xl transition-colors relative" onClick={() => setSettings && setIsEditing(true)}>
             <div className="flex justify-center mb-4 print:mb-2">
               <img 
-                src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Coat_of_arms_of_Angola.svg/200px-Coat_of_arms_of_Angola.svg.png" 
-                alt="Insígnia da República de Angola" 
+                src={settings.logoBase64 || "https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Coat_of_arms_of_Angola.svg/200px-Coat_of_arms_of_Angola.svg.png"} 
+                alt={settings.logoBase64 ? "Logomarca da Escola" : "Insígnia da República de Angola"} 
                 className="w-16 h-16 print:w-12 print:h-12 object-contain"
                 referrerPolicy="no-referrer"
               />
@@ -2058,14 +3765,38 @@ function OfficialHeader({ settings, setSettings, className, extraInfo }: {
   );
 }
 
-function SettingsView({ schoolSettings, setSchoolSettings }: { 
+function SettingsView({ schoolSettings, setSchoolSettings, showToast }: { 
   schoolSettings: SchoolSettings, 
-  setSchoolSettings: (s: SchoolSettings) => void 
+  setSchoolSettings: (s: SchoolSettings) => void,
+  showToast?: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void
 }) {
   const [localSettings, setLocalSettings] = useState(schoolSettings);
 
+  useEffect(() => {
+    setLocalSettings(schoolSettings);
+  }, [schoolSettings]);
+
   const handleSave = () => {
     setSchoolSettings(localSettings);
+    if (showToast) {
+      showToast('Configurações e logótipo guardados com sucesso! O logótipo foi aplicado automaticamente em todos os recibos e certificados.', 'success');
+    }
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setLocalSettings({
+            ...localSettings,
+            logoBase64: event.target.result as string
+          });
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   return (
@@ -2083,6 +3814,56 @@ function SettingsView({ schoolSettings, setSchoolSettings }: {
 
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="md:col-span-2 space-y-3 bg-neutral-50/50 p-6 rounded-[32px] border border-dashed border-neutral-200">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Logomarca Oficial da Escola</label>
+              <div className="flex flex-col sm:flex-row items-center gap-6">
+                <div className="relative group w-32 h-32 rounded-3xl bg-white border border-neutral-200 overflow-hidden flex items-center justify-center flex-shrink-0 shadow-sm">
+                  {localSettings.logoBase64 ? (
+                    <>
+                      <img src={localSettings.logoBase64} alt="Logomarca da Escola" className="w-full h-full object-contain p-2" />
+                      <button
+                        type="button"
+                        onClick={() => setLocalSettings({ ...localSettings, logoBase64: undefined })}
+                        className="absolute inset-0 bg-neutral-950/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white font-black text-xs cursor-pointer"
+                      >
+                        Remover
+                      </button>
+                    </>
+                  ) : (
+                    <div className="text-center p-4">
+                      <img 
+                        src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Coat_of_arms_of_Angola.svg/200px-Coat_of_arms_of_Angola.svg.png" 
+                        alt="Insígnia de Angola (Padrão)" 
+                        className="w-14 h-14 object-contain opacity-40 mx-auto"
+                      />
+                      <span className="text-[8px] font-black text-neutral-400 block mt-1.5 uppercase">Padrão Insígnia</span>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="flex-1 w-full space-y-2">
+                  <div className="border border-neutral-200 bg-white rounded-2xl p-4 text-center hover:border-neutral-400 transition-all relative cursor-pointer shadow-sm">
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={handleLogoUpload}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    />
+                    <div className="flex flex-col items-center gap-1.5">
+                      <Upload size={18} className="text-neutral-500" />
+                      <span className="text-xs font-black text-neutral-800">Carregar Logomarca da Escola</span>
+                      <span className="text-[10px] text-neutral-400 font-bold">Arraste a imagem ou clique para selecionar (Formatos: PNG, JPG)</span>
+                    </div>
+                  </div>
+                  {localSettings.logoBase64 && (
+                    <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 ml-1">
+                      <Check size={12} /> Logomarca personalizada pronta para guardar!
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">República</label>
               <input 
@@ -2196,57 +3977,257 @@ function DashboardView({
   grades, 
   getGrade,
   isMobile,
-  setActiveView
+  setActiveView,
+  currentUser
 }: { 
   students: Student[], 
   classes: Class[], 
   payments: Payment[], 
   grades: Grade[],
-  getGrade: (studentId: string, subject: string, period: string) => number | string,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number | string,
   isMobile: boolean,
-  setActiveView: (view: View) => void
+  setActiveView: (view: View) => void,
+  currentUser?: SystemUser | null
 }) {
   const [statsPeriod, setStatsPeriod] = useState<'1º Trimestre' | '2º Trimestre' | '3º Trimestre'>('1º Trimestre');
+  const [selectedSubject, setSelectedSubject] = useState<string>('Geral');
+  const [selectedMetric, setSelectedMetric] = useState<'passRate' | 'averageGrade'>('passRate');
+  const [selectedLevelCategory, setSelectedLevelCategory] = useState<'Todos' | 'Ensino Primário' | 'Ensino Secundário'>('Todos');
+  const [compTab, setCompTab] = useState<'classPassRate' | 'schoolPassRate'>('classPassRate');
+
   const totalRevenue = payments.reduce((acc, curr) => acc + curr.amount, 0);
   const enrolledCount = students.length;
-  const pendingPayments = students.length * 15000 - totalRevenue; // Simplified logic
+
+  const matchLevelCategory = (level: string = '') => {
+    if (selectedLevelCategory === 'Todos') return true;
+    const isPrimary = !!level.match(/^[1-6]ª Classe/) || level.includes('Ensino Primário');
+    if (selectedLevelCategory === 'Ensino Primário') return isPrimary;
+    if (selectedLevelCategory === 'Ensino Secundário') return !isPrimary;
+    return true;
+  };
+
+  const filteredClassesByLevel = classes.filter(cls => matchLevelCategory(cls.level));
+
+  // Extract all unique subjects in the active school classes matching level filter
+  const allSubjects = Array.from(
+    new Set(
+      filteredClassesByLevel.flatMap(cls => getSubjectsForClass(cls))
+    )
+  ).sort();
+
+  // Helper to compute a student's MT (Média Trimestral) for a subject and period
+  const getStudentSubjectGrade = (studentId: string, subjectId: string, period: string) => {
+    const mac = Number(getGrade(studentId, subjectId, period, 'MAC') || 0);
+    const npt = Number(getGrade(studentId, subjectId, period, 'NPT') || 0);
+    return (mac + npt) / 2;
+  };
 
   const getAcademicStats = () => {
-    const classPerformance = classes.map(cls => {
+    const classPerformance = filteredClassesByLevel.map(cls => {
       const classStudents = students.filter(s => s.classId === cls.id);
-      if (classStudents.length === 0) return { name: cls.name, passRate: 0, level: cls.level };
+      if (classStudents.length === 0) {
+        return { 
+          name: cls.name, 
+          value: 0, 
+          level: cls.level,
+          displayValue: '0',
+          passRate: 0,
+          averageGrade: 0,
+          maxScale: 20
+        };
+      }
 
+      // If specific subject is chosen, check if class has it
+      const hasSubject = selectedSubject === 'Geral' || getSubjectsForClass(cls).includes(selectedSubject);
+      if (!hasSubject) {
+        return {
+          name: cls.name,
+          value: 0,
+          level: cls.level,
+          displayValue: 'N/D',
+          notApplicable: true,
+          passRate: 0,
+          averageGrade: 0,
+          maxScale: 20
+        };
+      }
+
+      const subjects = selectedSubject === 'Geral' 
+        ? getSubjectsForClass(cls)
+        : [selectedSubject];
+
+      const { threshold, max } = getGradeScale(cls.level);
+      let totalGradesSum = 0;
+      let totalGradesCount = 0;
       let passes = 0;
+
       classStudents.forEach(student => {
-        const subjects = getSubjectsForClass(cls).slice(0, 3); // Representative subjects
-        let studentAvg = 0;
+        let studentSum = 0;
+        let studentCount = 0;
+
         subjects.forEach(sub => {
-          const g = getGrade(student.id, sub, statsPeriod);
-          studentAvg += Number(g);
+          const grade = getStudentSubjectGrade(student.id, sub, statsPeriod);
+          studentSum += grade;
+          studentCount++;
         });
-        const { threshold } = getGradeScale(cls.level);
-        if ((studentAvg / subjects.length) >= threshold) passes++;
+
+        const studentAvg = studentCount > 0 ? studentSum / studentCount : 0;
+        totalGradesSum += studentAvg;
+        totalGradesCount++;
+
+        if (studentAvg >= threshold) {
+          passes++;
+        }
       });
+
+      const passRate = Math.round((passes / classStudents.length) * 100);
+      const averageGrade = totalGradesCount > 0 ? Number((totalGradesSum / totalGradesCount).toFixed(1)) : 0;
 
       return {
         name: cls.name,
-        passRate: Math.round((passes / classStudents.length) * 100),
-        level: cls.level
+        value: selectedMetric === 'passRate' ? passRate : averageGrade,
+        level: cls.level,
+        displayValue: selectedMetric === 'passRate' ? `${passRate}%` : `${averageGrade}/${max}`,
+        passRate,
+        averageGrade,
+        maxScale: max
       };
-    });
+    }).filter(item => !item.notApplicable);
 
-    return classPerformance.sort((a, b) => b.passRate - a.passRate).slice(0, 6);
+    // Sort by value descending and take top 6 classes
+    return classPerformance.sort((a, b) => b.value - a.value).slice(0, 6);
   };
 
   const academicData = getAcademicStats();
 
-  const levelDistribution = LEVELS.filter(l => l !== 'Todos').map(lvl => ({
-    name: lvl,
-    count: students.filter(s => {
-      const cls = classes.find(c => c.id === s.classId);
-      return cls?.level === lvl;
-    }).length
-  }));
+  const getGradeDistribution = () => {
+    let insuficiente = 0;
+    let suficiente = 0;
+    let bom = 0;
+    let muitoBom = 0;
+
+    students.forEach(student => {
+      const cls = classes.find(c => c.id === student.classId);
+      if (!cls || !matchLevelCategory(cls.level)) return;
+
+      // Check if this class has the selected subject (if not "Geral")
+      if (selectedSubject !== 'Geral' && !getSubjectsForClass(cls).includes(selectedSubject)) {
+        return;
+      }
+
+      const subjects = selectedSubject === 'Geral' 
+        ? getSubjectsForClass(cls)
+        : [selectedSubject];
+
+      let studentSum = 0;
+      let studentCount = 0;
+
+      subjects.forEach(sub => {
+        const grade = getStudentSubjectGrade(student.id, sub, statsPeriod);
+        studentSum += grade;
+        studentCount++;
+      });
+
+      if (studentCount === 0) return;
+      const studentAvg = studentSum / studentCount;
+      const { max } = getGradeScale(cls.level);
+
+      if (max === 10) {
+        if (studentAvg < 5) insuficiente++;
+        else if (studentAvg < 7) suficiente++;
+        else if (studentAvg < 9) bom++;
+        else muitoBom++;
+      } else { // max === 20
+        if (studentAvg < 10) insuficiente++;
+        else if (studentAvg < 14) suficiente++;
+        else if (studentAvg < 18) bom++;
+        else muitoBom++;
+      }
+    });
+
+    return [
+      { name: 'Insuficiente', count: insuficiente, fill: '#f43f5e', description: 'Nota Baixa' },
+      { name: 'Suficiente', count: suficiente, fill: '#f59e0b', description: 'Média de Passagem' },
+      { name: 'Bom', count: bom, fill: '#10b981', description: 'Bom Aproveitamento' },
+      { name: 'Muito Bom', count: muitoBom, fill: '#3b82f6', description: 'Excelente' }
+    ];
+  };
+
+  const gradeDistributionData = getGradeDistribution();
+
+  const getPerformanceTrend = () => {
+    // 1. Get top 4 classes based on the current period's performance to track
+    const topClasses = academicData.slice(0, 4).map(c => {
+      const cls = classes.find(cl => cl.name === c.name);
+      return { id: cls?.id, name: c.name, level: c.level };
+    });
+
+    const periods = ['1º Trimestre', '2º Trimestre', '3º Trimestre'] as const;
+
+    const trendData = periods.map(period => {
+      const periodObj: { name: string; [key: string]: any } = { name: period.split(' ')[0] + ' Trim' };
+
+      topClasses.forEach(tc => {
+        if (!tc.id) return;
+        const cls = classes.find(c => c.id === tc.id);
+        if (!cls) return;
+
+        const classStudents = students.filter(s => s.classId === tc.id);
+        if (classStudents.length === 0) {
+          periodObj[tc.name] = 0;
+          return;
+        }
+
+        if (selectedSubject !== 'Geral' && !getSubjectsForClass(cls).includes(selectedSubject)) {
+          periodObj[tc.name] = null;
+          return;
+        }
+
+        const subjects = selectedSubject === 'Geral' 
+          ? getSubjectsForClass(cls)
+          : [selectedSubject];
+
+        const { threshold } = getGradeScale(cls.level);
+        let totalGradesSum = 0;
+        let totalGradesCount = 0;
+        let passes = 0;
+
+        classStudents.forEach(student => {
+          let studentSum = 0;
+          let studentCount = 0;
+
+          subjects.forEach(sub => {
+            const grade = getStudentSubjectGrade(student.id, sub, period);
+            studentSum += grade;
+            studentCount++;
+          });
+
+          const studentAvg = studentCount > 0 ? studentSum / studentCount : 0;
+          totalGradesSum += studentAvg;
+          totalGradesCount++;
+
+          if (studentAvg >= threshold) {
+            passes++;
+          }
+        });
+
+        const passRate = Math.round((passes / classStudents.length) * 100);
+        const averageGrade = totalGradesCount > 0 ? Number((totalGradesSum / totalGradesCount).toFixed(1)) : 0;
+
+        periodObj[tc.name] = selectedMetric === 'passRate' ? passRate : averageGrade;
+      });
+
+      return periodObj;
+    });
+
+    return {
+      trendData,
+      classNames: topClasses.map(tc => tc.name)
+    };
+  };
+
+  const { trendData, classNames } = getPerformanceTrend();
+  const TREND_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
 
   const getMonthlyRevenue = () => {
     const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -2263,20 +4244,139 @@ function DashboardView({
 
   const chartData = getMonthlyRevenue();
 
+  // --- GRÁFICOS COMPARATIVOS DE DESEMPENHO ACADÉMICO ---
+  const getComparativeClassAverages = () => {
+    return filteredClassesByLevel.map(cls => {
+      const classStudents = students.filter(s => s.classId === cls.id);
+      if (classStudents.length === 0) return null;
+
+      const hasSubject = selectedSubject === 'Geral' || getSubjectsForClass(cls).includes(selectedSubject);
+      if (!hasSubject) return null;
+
+      const subjects = selectedSubject === 'Geral' 
+        ? getSubjectsForClass(cls)
+        : [selectedSubject];
+
+      const { threshold, max } = getGradeScale(cls.level);
+
+      const getPeriodStats = (periodStr: string) => {
+        let totalSum = 0;
+        let count = 0;
+        let passes = 0;
+
+        classStudents.forEach(student => {
+          let studentSum = 0;
+          let subCount = 0;
+
+          subjects.forEach(sub => {
+            const grade = getStudentSubjectGrade(student.id, sub, periodStr);
+            studentSum += grade;
+            subCount++;
+          });
+
+          const studentAvg = subCount > 0 ? studentSum / subCount : 0;
+          totalSum += studentAvg;
+          count++;
+
+          if (studentAvg >= threshold) {
+            passes++;
+          }
+        });
+
+        const avgGrade = count > 0 ? Number((totalSum / count).toFixed(1)) : 0;
+        const passRate = count > 0 ? Math.round((passes / count) * 100) : 0;
+
+        return { avgGrade, passRate };
+      };
+
+      const p1 = getPeriodStats('1º Trimestre');
+      const p2 = getPeriodStats('2º Trimestre');
+      const p3 = getPeriodStats('3º Trimestre');
+
+      return {
+        name: cls.name,
+        level: cls.level,
+        maxScale: max,
+        m1: p1.avgGrade,
+        m2: p2.avgGrade,
+        m3: p3.avgGrade,
+        p1Rate: p1.passRate,
+        p2Rate: p2.passRate,
+        p3Rate: p3.passRate,
+      };
+    }).filter((item): item is NonNullable<typeof item> => item !== null);
+  };
+
+  const comparativeClassAverages = getComparativeClassAverages();
+
+  const getComparativeSchoolPassRateByPeriod = () => {
+    const periods = ['1º Trimestre', '2º Trimestre', '3º Trimestre'] as const;
+
+    return periods.map(periodStr => {
+      let totalStudentsCount = 0;
+      let totalPassedCount = 0;
+      let sumOfAverages = 0;
+
+      students.forEach(student => {
+        const cls = classes.find(c => c.id === student.classId);
+        if (!cls || !matchLevelCategory(cls.level)) return;
+
+        if (selectedSubject !== 'Geral' && !getSubjectsForClass(cls).includes(selectedSubject)) {
+          return;
+        }
+
+        const subjects = selectedSubject === 'Geral' 
+          ? getSubjectsForClass(cls)
+          : [selectedSubject];
+
+        const { threshold } = getGradeScale(cls.level);
+        let studentSum = 0;
+        let subCount = 0;
+
+        subjects.forEach(sub => {
+          const grade = getStudentSubjectGrade(student.id, sub, periodStr);
+          studentSum += grade;
+          subCount++;
+        });
+
+        const studentAvg = subCount > 0 ? studentSum / subCount : 0;
+        sumOfAverages += studentAvg;
+        totalStudentsCount++;
+
+        if (studentAvg >= threshold) {
+          totalPassedCount++;
+        }
+      });
+
+      const passRate = totalStudentsCount > 0 ? Math.round((totalPassedCount / totalStudentsCount) * 100) : 0;
+      const avgGrade = totalStudentsCount > 0 ? Number((sumOfAverages / totalStudentsCount).toFixed(1)) : 0;
+
+      return {
+        period: periodStr.split(' ')[0] + ' Trim',
+        fullName: periodStr,
+        taxaAprovacao: passRate,
+        mediaGeral: avgGrade,
+        totalAlunos: totalStudentsCount,
+        aprovados: totalPassedCount,
+        reprovados: totalStudentsCount - totalPassedCount
+      };
+    });
+  };
+
+  const comparativeSchoolPassRates = getComparativeSchoolPassRateByPeriod();
+
   const genderData = [
     { name: 'Masculino', value: students.filter(s => s.gender === 'M').length },
     { name: 'Feminino', value: students.filter(s => s.gender === 'F').length },
   ];
-
-  const COLORS = ['#059669', '#10b981'];
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-8">
       {/* Header Info */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black text-neutral-900 tracking-tight">Visão Geral</h2>
-          <p className="text-sm font-bold text-neutral-400 mt-1">Resumo das actividades e estatísticas da instituição.</p>
+          <h2 className="text-2xl font-black text-neutral-900 tracking-tight">Painel de Estatística</h2>
+          <p className="text-sm font-bold text-neutral-400 mt-1">Análise em tempo real do aproveitamento escolar e finanças da instituição.</p>
         </div>
         <div className="flex gap-2">
            <div className="bg-white px-4 py-2 flex items-center justify-center rounded-2xl border border-neutral-200 shadow-sm text-xs font-black text-neutral-600 gap-2 w-fit">
@@ -2310,24 +4410,72 @@ function DashboardView({
         ))}
       </div>
 
-      {/* Main Charts Area */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
-        
-        {/* Academic Performance */}
-        <div className="lg:col-span-2 bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm relative overflow-hidden flex flex-col">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 relative z-10">
-            <div>
-              <h3 className="font-black text-xl text-neutral-900 tracking-tight">Aproveitamento por Turma</h3>
-              <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mt-1">Taxa de aprovação (%)</p>
+      {/* Academic Panel Section Header & Filters */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <GraduationCap className="text-emerald-600" size={24} />
+          <h3 className="font-black text-xl text-neutral-900 tracking-tight">Análise Académica Avançada</h3>
+        </div>
+
+        {/* Interactive Selector Controls Card */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 p-5 bg-white rounded-3xl border border-neutral-200 shadow-sm relative z-20">
+          <div className="flex flex-col">
+            <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest block mb-2 flex items-center gap-1.5">
+              <GraduationCap size={12} className="text-neutral-500" /> Nível de Ensino
+            </span>
+            <div className="flex gap-1 p-1 bg-neutral-50 border border-neutral-200 rounded-2xl h-[46px] items-center">
+              {(['Todos', 'Ensino Primário', 'Ensino Secundário'] as const).map((lvl) => (
+                <button
+                  key={lvl}
+                  type="button"
+                  onClick={() => setSelectedLevelCategory(lvl)}
+                  className={cn(
+                    "flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap px-1 text-center cursor-pointer",
+                    selectedLevelCategory === lvl 
+                      ? "bg-white text-emerald-600 shadow-sm border border-neutral-200/50" 
+                      : "text-neutral-400 hover:text-neutral-600"
+                  )}
+                >
+                  {lvl === 'Todos' ? 'Todos' : lvl === 'Ensino Primário' ? 'Primário' : 'Secundário'}
+                </button>
+              ))}
             </div>
-            <div className="flex gap-1 p-1 bg-neutral-100 rounded-2xl border border-neutral-200/50 overflow-x-auto hide-scrollbar">
+          </div>
+
+          <div className="flex flex-col">
+            <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest block mb-2 flex items-center gap-1.5">
+              <BookOpen size={12} className="text-neutral-500" /> Disciplina de Estudo
+            </span>
+            <div className="relative">
+              <select
+                value={selectedSubject}
+                onChange={(e) => setSelectedSubject(e.target.value)}
+                className="w-full pl-4 pr-10 py-3 bg-neutral-50 hover:bg-neutral-100/70 border border-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-2xl text-xs font-bold text-neutral-800 transition-all cursor-pointer appearance-none outline-none"
+              >
+                <option value="Geral">Geral (Média de Todas as Disciplinas)</option>
+                {allSubjects.map((sub) => (
+                  <option key={sub} value={sub}>{sub}</option>
+                ))}
+              </select>
+              <div className="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none text-neutral-500">
+                <ChevronDown size={16} />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col">
+            <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest block mb-2 flex items-center gap-1.5">
+              <CalendarDays size={12} className="text-neutral-500" /> Período Avaliativo
+            </span>
+            <div className="flex gap-1 p-1 bg-neutral-50 border border-neutral-200 rounded-2xl h-[46px] items-center">
               {(['1º Trimestre', '2º Trimestre', '3º Trimestre'] as const).map((p) => (
                 <button
                   key={p}
+                  type="button"
                   onClick={() => setStatsPeriod(p)}
                   className={cn(
-                    "px-4 py-2 rounded-[12px] text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap",
-                    statsPeriod === p ? "bg-white text-emerald-600 shadow-sm" : "text-neutral-400 hover:text-neutral-600"
+                    "flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer",
+                    statsPeriod === p ? "bg-white text-emerald-600 shadow-sm border border-neutral-200/50" : "text-neutral-400 hover:text-neutral-600"
                   )}
                 >
                   {p.split(' ')[0]} Trim
@@ -2335,88 +4483,538 @@ function DashboardView({
               ))}
             </div>
           </div>
-          
-          <div className="h-[280px] w-full relative z-10 mt-auto">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={academicData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} domain={[0, 100]} />
-                <Tooltip 
-                  cursor={{ fill: '#f8fafc', radius: 8 }}
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload;
-                      return (
-                        <div className="bg-neutral-900 p-4 rounded-2xl shadow-xl border border-neutral-800 text-white min-w-[140px] z-50 relative">
-                          <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest mb-1">{data.level}</p>
-                          <p className="font-black text-lg tracking-tight leading-none">{data.name}</p>
-                          <div className="mt-4 pt-3 border-t border-neutral-800 flex items-center justify-between">
-                            <span className="text-xs font-bold text-neutral-400">Aprovação</span>
-                            <span className="text-sm font-black text-emerald-400">{data.passRate}%</span>
-                          </div>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-                <Bar dataKey="passRate" radius={[8, 8, 0, 0]} maxBarSize={48}>
-                  {academicData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={index === 0 ? '#10b981' : '#34d399'} fillOpacity={1 - (index * 0.05)} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+
+          <div className="flex flex-col">
+            <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest block mb-2 flex items-center gap-1.5">
+              <TrendingUp size={12} className="text-neutral-500" /> Métrica Visualizada
+            </span>
+            <div className="flex gap-1 p-1 bg-neutral-50 border border-neutral-200 rounded-2xl h-[46px] items-center">
+              {[
+                { value: 'passRate', label: 'Taxa de Aprovação (%)' },
+                { value: 'averageGrade', label: 'Média das Notas' }
+              ].map((m) => (
+                <button
+                  key={m.value}
+                  type="button"
+                  onClick={() => setSelectedMetric(m.value as 'passRate' | 'averageGrade')}
+                  className={cn(
+                    "flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer",
+                    selectedMetric === m.value ? "bg-white text-emerald-600 shadow-sm border border-neutral-200/50" : "text-neutral-400 hover:text-neutral-600"
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Gender Distribution & Quick Stats */}
-        <div className="bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm flex flex-col justify-between">
-          <div>
-            <h3 className="font-black text-xl text-neutral-900 tracking-tight">Distribuição de Género</h3>
-            <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mt-1">Alunos matriculados</p>
-          </div>
+        {/* Academic Analytics Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
           
-          <div className="h-[200px] w-full my-6">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={genderData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                  stroke="none"
-                >
-                  {genderData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={index === 0 ? '#0ea5e9' : '#ec4899'} />
-                  ))}
-                </Pie>
-                <Tooltip 
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '12px 16px', fontWeight: 'bold' }}
-                  itemStyle={{ color: '#171717', fontSize: '14px', fontWeight: 900 }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+          {/* Chart 1: Aproveitamento por Turma */}
+          <div className="lg:col-span-2 bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm relative overflow-hidden flex flex-col">
+            <div className="mb-6 relative z-10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-black text-lg text-neutral-900 tracking-tight">Desempenho por Turma</h4>
+                  <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mt-1">
+                    Nível: <span className="text-blue-600 font-extrabold">{selectedLevelCategory}</span> • Filtro: <span className="text-emerald-600 font-extrabold">{selectedSubject}</span> • {selectedMetric === 'passRate' ? 'Taxa de Aprovação (%)' : 'Média das Notas'}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs bg-emerald-50 text-emerald-700 font-black px-3 py-1.5 rounded-full uppercase tracking-wider border border-emerald-100">
+                    {statsPeriod}
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="h-[280px] w-full relative z-10 mt-auto">
+              {academicData.length === 0 ? (
+                <div className="h-full w-full flex flex-col items-center justify-center text-center p-6 bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
+                  <BookOpen size={40} className="text-neutral-300 mb-2 animate-bounce" />
+                  <p className="text-sm font-bold text-neutral-500">Sem dados pedagógicos para a disciplina seleccionada.</p>
+                  <p className="text-xs text-neutral-400 mt-1">Experimente seleccionar outra disciplina ou verificar os lançamentos.</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={academicData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} dy={10} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} domain={selectedMetric === 'passRate' ? [0, 100] : [0, 'auto']} />
+                    <Tooltip 
+                      cursor={{ fill: '#f8fafc', radius: 8 }}
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-neutral-900 p-4 rounded-2xl shadow-xl border border-neutral-800 text-white min-w-[150px] z-50 relative">
+                              <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest mb-1">{data.level}</p>
+                              <p className="font-black text-base tracking-tight leading-none mb-3">{data.name}</p>
+                              <div className="pt-2 border-t border-neutral-800 space-y-2">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-neutral-400 font-bold">Taxa Aprovação:</span>
+                                  <span className="font-black text-emerald-400">{data.passRate}%</span>
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-neutral-400 font-bold">Média Notas:</span>
+                                  <span className="font-black text-blue-400">{data.averageGrade}/{data.maxScale}</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="value" radius={[8, 8, 0, 0]} maxBarSize={48}>
+                      {academicData.map((entry, index) => {
+                        let barColor = '#34d399'; // Emerald-400
+                        if (selectedMetric === 'averageGrade') {
+                          // Color code based on average grade
+                          const ratio = entry.averageGrade / entry.maxScale;
+                          if (ratio >= 0.8) barColor = '#3b82f6'; // Blue-500
+                          else if (ratio >= 0.5) barColor = '#10b981'; // Emerald-500
+                          else if (ratio >= 0.4) barColor = '#f59e0b'; // Amber-500
+                          else barColor = '#f43f5e'; // Rose-500
+                        } else {
+                          // Pass rates coloring
+                          if (entry.passRate >= 80) barColor = '#10b981';
+                          else if (entry.passRate >= 50) barColor = '#34d399';
+                          else barColor = '#f43f5e';
+                        }
+                        return <Cell key={`cell-${index}`} fill={barColor} />;
+                      })}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </div>
 
-          <div className="flex justify-center gap-6">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-sky-500" />
-              <span className="text-xs font-bold text-neutral-600">Masc. ({genderData[0].value})</span>
+          {/* Chart 2: Distribuição por Escalão */}
+          <div className="bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm flex flex-col justify-between">
+            <div>
+              <h4 className="font-black text-lg text-neutral-900 tracking-tight font-sans">Distribuição das Notas</h4>
+              <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mt-1">Escalão de desempenho dos alunos</p>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-pink-500" />
-              <span className="text-xs font-bold text-neutral-600">Fem. ({genderData[1].value})</span>
+
+            <div className="h-[200px] w-full my-6">
+              {students.length === 0 ? (
+                <div className="h-full w-full flex items-center justify-center text-xs font-bold text-neutral-400">
+                  Sem dados
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={gradeDistributionData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#737373', fontWeight: 700 }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#737373', fontWeight: 700 }} allowDecimals={false} />
+                    <Tooltip 
+                      cursor={{ fill: '#f8fafc', radius: 8 }}
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-neutral-900 p-3 rounded-xl shadow-md text-white border border-neutral-800 text-xs font-bold">
+                              <p className="text-[9px] text-neutral-400 uppercase tracking-widest mb-1">{data.description}</p>
+                              <p className="text-base font-black">{data.name}</p>
+                              <p className="mt-2 text-emerald-400 font-extrabold">{data.count} Alunos</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={32}>
+                      {gradeDistributionData.map((entry, index) => (
+                        <Cell key={`cell-dist-${index}`} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[10px] font-bold text-neutral-600 bg-neutral-50 p-3 rounded-2xl border border-neutral-100">
+              {gradeDistributionData.map((entry, index) => (
+                <div key={index} className="flex items-center gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.fill }} />
+                  <span className="truncate">{entry.name}: {entry.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </div>
+
+        {/* Second Row: Performance Trend (LineChart) & Gender Distribution */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
+          
+          {/* Chart 3: Tendência de Desempenho */}
+          <div className="lg:col-span-2 bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm flex flex-col">
+            <div className="mb-6">
+              <h4 className="font-black text-lg text-neutral-900 tracking-tight">Evolução do Aproveitamento (Top Turmas)</h4>
+              <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mt-1">
+                Progresso das 4 turmas com maior rendimento ao longo do ano lectivo
+              </p>
+            </div>
+
+            <div className="h-[250px] w-full mt-auto relative">
+              {classNames.length === 0 ? (
+                <div className="h-full w-full flex flex-col items-center justify-center text-center p-6 bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
+                  <Activity size={32} className="text-neutral-300 mb-2 animate-pulse" />
+                  <p className="text-xs font-bold text-neutral-400">Sem dados suficientes para mapear a evolução temporal.</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData} margin={{ top: 15, right: 15, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} dy={5} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} domain={selectedMetric === 'passRate' ? [0, 100] : [0, 'auto']} />
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '16px', border: 'none', backgroundColor: '#171717', color: '#fff', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.15)', padding: '12px 16px', fontWeight: 'bold' }}
+                      itemStyle={{ fontSize: '12px' }}
+                      labelStyle={{ fontSize: '10px', textTransform: 'uppercase', color: '#a3a3a3', marginBottom: '4px' }}
+                    />
+                    <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 'bold', paddingTop: '15px' }} />
+                    {classNames.map((name, index) => (
+                      <Line 
+                        key={name} 
+                        type="monotone" 
+                        dataKey={name} 
+                        stroke={TREND_COLORS[index % TREND_COLORS.length]} 
+                        strokeWidth={3} 
+                        dot={{ r: 5, strokeWidth: 2, fill: '#fff' }} 
+                        activeDot={{ r: 7 }} 
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          {/* Chart 4: Gender Distribution */}
+          <div className="bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm flex flex-col justify-between">
+            <div>
+              <h4 className="font-black text-lg text-neutral-900 tracking-tight">Distribuição de Género</h4>
+              <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mt-1">Alunos matriculados na instituição</p>
+            </div>
+            
+            <div className="h-[200px] w-full my-6">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={genderData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                    stroke="none"
+                  >
+                    {genderData.map((entry, index) => (
+                      <Cell key={`cell-gender-${index}`} fill={index === 0 ? '#3b82f6' : '#ec4899'} />
+                    ))}
+                  </Pie>
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '12px 16px', fontWeight: 'bold' }}
+                    itemStyle={{ color: '#171717', fontSize: '14px', fontWeight: 900 }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="flex justify-center gap-6">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse" />
+                <span className="text-xs font-bold text-neutral-600">Masc. ({genderData[0].value})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-pink-500 animate-pulse" />
+                <span className="text-xs font-bold text-neutral-600">Fem. ({genderData[1].value})</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* SEÇÃO DE GRÁFICOS COMPARATIVOS DE DESEMPENHO ACADÉMICO */}
+        <div className="space-y-6 pt-6 border-t border-neutral-200/80">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <Activity className="text-blue-600" size={24} />
+                <h3 className="font-black text-xl text-neutral-900 tracking-tight">Análise Comparativa por Trimestre</h3>
+              </div>
+              <p className="text-xs font-bold text-neutral-400 mt-1">
+                Comparativo da média das turmas e taxa de aprovação no 1º, 2º e 3º Trimestres (
+                {selectedLevelCategory !== 'Todos' && <span className="text-blue-600 font-extrabold">Nível: {selectedLevelCategory} | </span>}
+                Disciplina: <span className="text-emerald-600 font-extrabold">{selectedSubject}</span>)
+              </p>
+            </div>
+
+            {/* Quick Summary Badges */}
+            <div className="flex flex-wrap gap-2">
+              {comparativeSchoolPassRates.map((s, idx) => (
+                <div key={idx} className="bg-white px-3 py-2 rounded-2xl border border-neutral-200 shadow-sm flex flex-col text-right min-w-[100px]">
+                  <span className="text-[9px] font-black uppercase text-neutral-400">{s.fullName}</span>
+                  <span className="text-xs font-black text-neutral-800">
+                    <span className="text-blue-600">{s.mediaGeral}v</span> • <span className="text-emerald-600">{s.taxaAprovacao}% Aprov.</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Comparative Charts Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
+            
+            {/* Chart A: Comparativo de Média das Turmas (1º, 2º e 3º Trimestres) */}
+            <div className="bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm flex flex-col justify-between relative overflow-hidden">
+              <div className="mb-6 flex items-start justify-between">
+                <div>
+                  <h4 className="font-black text-lg text-neutral-900 tracking-tight flex items-center gap-2">
+                    <TrendingUp size={18} className="text-blue-500" />
+                    Média das Turmas por Trimestre
+                  </h4>
+                  <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mt-1">
+                    Comparativo direto do rendimento médio (escala de cada classe)
+                  </p>
+                </div>
+              </div>
+
+              <div className="h-[300px] w-full relative z-10 my-2">
+                {comparativeClassAverages.length === 0 ? (
+                  <div className="h-full w-full flex flex-col items-center justify-center text-center p-6 bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
+                    <BookOpen size={36} className="text-neutral-300 mb-2 animate-bounce" />
+                    <p className="text-xs font-bold text-neutral-500">Sem lançamentos suficientes para comparação trimestral.</p>
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={comparativeClassAverages} margin={{ top: 15, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} dy={8} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} domain={[0, 'auto']} />
+                      <Tooltip 
+                        cursor={{ fill: '#f8fafc', radius: 8 }}
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            const diff13 = (data.m3 - data.m1).toFixed(1);
+                            const isPositive = Number(diff13) >= 0;
+                            return (
+                              <div className="bg-neutral-900 p-4 rounded-2xl shadow-xl border border-neutral-800 text-white min-w-[170px] z-50">
+                                <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest mb-1">{data.level}</p>
+                                <p className="font-black text-base tracking-tight mb-2">{data.name}</p>
+                                <div className="space-y-1.5 text-xs pt-2 border-t border-neutral-800">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-blue-400 font-bold">1º Trimestre:</span>
+                                    <span className="font-black">{data.m1}/{data.maxScale}</span>
+                                  </div>
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-emerald-400 font-bold">2º Trimestre:</span>
+                                    <span className="font-black">{data.m2}/{data.maxScale}</span>
+                                  </div>
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-amber-400 font-bold">3º Trimestre:</span>
+                                    <span className="font-black">{data.m3}/{data.maxScale}</span>
+                                  </div>
+                                  <div className="pt-2 border-t border-neutral-800 flex justify-between items-center text-[11px]">
+                                    <span className="text-neutral-400 font-bold">Evolução (1º ao 3º Trim):</span>
+                                    <span className={cn("font-black", isPositive ? "text-emerald-400" : "text-rose-400")}>
+                                      {isPositive ? `+${diff13}` : diff13} val.
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Legend 
+                        iconType="circle" 
+                        wrapperStyle={{ fontSize: '11px', fontWeight: 'bold', paddingTop: '12px' }} 
+                      />
+                      <Bar name="1º Trimestre" dataKey="m1" fill="#3b82f6" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                      <Bar name="2º Trimestre" dataKey="m2" fill="#10b981" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                      <Bar name="3º Trimestre" dataKey="m3" fill="#f59e0b" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-center bg-neutral-50 p-3 rounded-2xl border border-neutral-100 mt-2">
+                <div className="flex items-center justify-center gap-1.5 text-blue-700">
+                  <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                  <span>1º Trim: Azul</span>
+                </div>
+                <div className="flex items-center justify-center gap-1.5 text-emerald-700">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <span>2º Trim: Verde</span>
+                </div>
+                <div className="flex items-center justify-center gap-1.5 text-amber-700">
+                  <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                  <span>3º Trim: Amarelo</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Chart B: Comparativo da Taxa de Aprovação por Período */}
+            <div className="bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm flex flex-col justify-between relative overflow-hidden">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h4 className="font-black text-lg text-neutral-900 tracking-tight flex items-center gap-2">
+                    <Award size={18} className="text-emerald-600" />
+                    Taxa de Aprovação por Período (%)
+                  </h4>
+                  <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mt-1">
+                    Porcentagem de alunos aprovados em cada trimestre
+                  </p>
+                </div>
+
+                {/* View Toggle */}
+                <div className="flex gap-1 p-1 bg-neutral-100 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setCompTab('classPassRate')}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer",
+                      compTab === 'classPassRate' ? "bg-white text-emerald-600 shadow-sm font-black" : "text-neutral-500 hover:text-neutral-800"
+                    )}
+                  >
+                    Por Turma
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCompTab('schoolPassRate')}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer",
+                      compTab === 'schoolPassRate' ? "bg-white text-emerald-600 shadow-sm font-black" : "text-neutral-500 hover:text-neutral-800"
+                    )}
+                  >
+                    Visão Geral
+                  </button>
+                </div>
+              </div>
+
+              <div className="h-[300px] w-full relative z-10 my-2">
+                {compTab === 'classPassRate' ? (
+                  comparativeClassAverages.length === 0 ? (
+                    <div className="h-full w-full flex flex-col items-center justify-center text-center p-6 bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
+                      <BookOpen size={36} className="text-neutral-300 mb-2 animate-bounce" />
+                      <p className="text-xs font-bold text-neutral-500">Sem lançamentos para taxa de aprovação.</p>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={comparativeClassAverages} margin={{ top: 15, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} dy={8} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} domain={[0, 100]} />
+                        <Tooltip 
+                          cursor={{ fill: '#f8fafc', radius: 8 }}
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-neutral-900 p-4 rounded-2xl shadow-xl border border-neutral-800 text-white min-w-[170px] z-50">
+                                  <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest mb-1">{data.level}</p>
+                                  <p className="font-black text-base tracking-tight mb-2">{data.name}</p>
+                                  <div className="space-y-1.5 text-xs pt-2 border-t border-neutral-800">
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-blue-400 font-bold">1º Trim Aprovação:</span>
+                                      <span className="font-black">{data.p1Rate}%</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-emerald-400 font-bold">2º Trim Aprovação:</span>
+                                      <span className="font-black">{data.p2Rate}%</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-amber-400 font-bold">3º Trim Aprovação:</span>
+                                      <span className="font-black">{data.p3Rate}%</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Legend 
+                          iconType="circle" 
+                          wrapperStyle={{ fontSize: '11px', fontWeight: 'bold', paddingTop: '12px' }} 
+                        />
+                        <Bar name="1º Trim (%)" dataKey="p1Rate" fill="#3b82f6" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                        <Bar name="2º Trim (%)" dataKey="p2Rate" fill="#10b981" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                        <Bar name="3º Trim (%)" dataKey="p3Rate" fill="#f59e0b" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={comparativeSchoolPassRates} margin={{ top: 15, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
+                      <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} dy={8} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#737373', fontWeight: 700 }} domain={[0, 100]} />
+                      <Tooltip 
+                        cursor={{ fill: '#f8fafc', radius: 8 }}
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            return (
+                              <div className="bg-neutral-900 p-4 rounded-2xl shadow-xl border border-neutral-800 text-white min-w-[170px] z-50">
+                                <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest mb-1">Aprovação Global Institucional</p>
+                                <p className="font-black text-base tracking-tight mb-2">{data.fullName}</p>
+                                <div className="space-y-1.5 text-xs pt-2 border-t border-neutral-800">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-emerald-400 font-bold">Taxa de Aprovação:</span>
+                                    <span className="font-black">{data.taxaAprovacao}%</span>
+                                  </div>
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-blue-400 font-bold">Média Geral Escola:</span>
+                                    <span className="font-black">{data.mediaGeral} v</span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-neutral-300">
+                                    <span>Total Aprovados:</span>
+                                    <span className="font-black text-emerald-400">{data.aprovados} alunos</span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-neutral-300">
+                                    <span>Não Aprovados:</span>
+                                    <span className="font-black text-rose-400">{data.reprovados} alunos</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Bar name="Taxa de Aprovação (%)" dataKey="taxaAprovacao" radius={[8, 8, 0, 0]} maxBarSize={48}>
+                        {comparativeSchoolPassRates.map((entry, index) => {
+                          const color = index === 0 ? '#3b82f6' : index === 1 ? '#10b981' : '#f59e0b';
+                          return <Cell key={`cell-sch-${index}`} fill={color} />;
+                        })}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-bold bg-emerald-50 text-emerald-800 p-3 rounded-2xl border border-emerald-100/80 mt-2">
+                <span>💡 Comparativo de taxa de aprovação (%) calculado por turma e por trimestre.</span>
+              </div>
+            </div>
+
           </div>
         </div>
 
       </div>
 
+      {/* Third Row: Quick Actions & Financials */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
         
         {/* Quick Actions */}
@@ -2426,11 +5024,16 @@ function DashboardView({
           
           <div className="flex-1 flex flex-col justify-center space-y-3">
             {[
-              { label: 'Nova Matrícula', icon: Plus, action: () => setActiveView('students'), color: 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30' },
-              { label: 'Registar Pagamento', icon: CreditCard, action: () => setActiveView('finance'), color: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30' },
-              { label: 'Lançar Notas', icon: BookOpen, action: () => setActiveView('academic'), color: 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' },
-              { label: 'Emitir Declaração', icon: FileDown, action: () => setActiveView('certificates'), color: 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30' },
-            ].map((action, i) => (
+              { label: 'Nova Matrícula', icon: Plus, action: () => setActiveView('students'), color: 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30', roles: ['Administrador', 'Secretário'] },
+              { label: 'Registar Pagamento', icon: CreditCard, action: () => setActiveView('finance'), color: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30', roles: ['Financeiro'] },
+              { label: 'Assistente Pedagógico', icon: Bot, action: () => setActiveView('ai-assistant'), color: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30', roles: ['Super-Administrador', 'Administrador', 'Professor', 'Secretário'] },
+              { label: 'Lançar Notas', icon: BookOpen, action: () => setActiveView('academic'), color: 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30', roles: ['Administrador', 'Professor', 'Secretário'] },
+              { label: 'Emitir Declaração', icon: FileDown, action: () => setActiveView('certificates'), color: 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30', roles: ['Administrador', 'Secretário'] },
+              { label: 'Auditoria de Acesso', icon: History, action: () => setActiveView('audit'), color: 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30', roles: ['Super-Administrador'] },
+              { label: 'Controlo de Escolas', icon: SchoolIcon, action: () => setActiveView('schools'), color: 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30', roles: ['Super-Administrador'] },
+              { label: 'Gerir Utilizadores', icon: UserCog, action: () => setActiveView('users'), color: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30', roles: ['Super-Administrador'] },
+              { label: 'Backup do Sistema', icon: Database, action: () => setActiveView('backup'), color: 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30', roles: ['Super-Administrador'] },
+            ].filter(a => a.roles.includes(currentUser?.role || '')).map((action, i) => (
               <button 
                 key={i} 
                 onClick={action.action}
@@ -2645,9 +5248,9 @@ function StudentsView({
   classes: Class[], 
   grades: Grade[],
   onAddStudent?: (s: Student) => void,
-  onUpdateStudent: (s: Student) => void,
+  onUpdateStudent?: (s: Student) => void,
   onDeleteStudent?: (id: string) => void,
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
   setActiveView: (view: View) => void,
   isAdding: boolean,
   setIsAdding: (b: boolean) => void,
@@ -2665,8 +5268,15 @@ function StudentsView({
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   const calculateAge = (birthDate: string) => {
-    const diff = Date.now() - new Date(birthDate).getTime();
-    return Math.abs(new Date(diff).getUTCFullYear() - 1970);
+    if (!birthDate) return 0;
+    try {
+      const birth = new Date(birthDate);
+      if (isNaN(birth.getTime())) return 0;
+      const diff = Date.now() - birth.getTime();
+      return Math.abs(new Date(diff).getUTCFullYear() - 1970);
+    } catch (e) {
+      return 0;
+    }
   };
 
   const zones = Array.from(new Set(students.map(s => s.residentialZone).filter(Boolean) as string[]));
@@ -2938,13 +5548,15 @@ function StudentsView({
                       >
                         <Edit size={14} />
                       </button>
-                      <button 
-                        onClick={() => onDeleteStudent(student.id)}
-                        className="p-2 bg-neutral-100 text-neutral-600 hover:bg-rose-600 hover:text-white rounded-xl transition-all active:scale-95 shadow-sm"
-                        title="Eliminar Aluno"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {onDeleteStudent && (
+                        <button 
+                          onClick={() => onDeleteStudent(student.id)}
+                          className="p-2 bg-neutral-100 text-neutral-600 hover:bg-rose-600 hover:text-white rounded-xl transition-all active:scale-95 shadow-sm"
+                          title="Eliminar Aluno"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -3102,7 +5714,7 @@ function StudentsView({
             
             let startY = 45;
             if (insignia) {
-              doc.addImage(insignia, 'PNG', 95, 10, 20, 20);
+              doc.addImage(insignia, getImageFormat(insignia), 95, 10, 20, 20);
               doc.setFontSize(14);
               doc.setTextColor(16, 185, 129);
               doc.text('B.A GestEscola', 105, 36, { align: 'center' });
@@ -3204,7 +5816,7 @@ function TeacherAssignmentModal({ teacher, classes, onClose, onUpdateTeachers, t
   teacher: Teacher,
   classes: Class[],
   onClose: () => void,
-  onUpdateTeachers: (newTeachers: Teacher[]) => void,
+  onUpdateTeachers?: (newTeachers: Teacher[]) => void,
   teachers: Teacher[]
 }) {
   const [selectedClassId, setSelectedClassId] = useState(classes[0]?.id || '');
@@ -3332,7 +5944,7 @@ function TeacherAssignmentModal({ teacher, classes, onClose, onUpdateTeachers, t
 function TeachersAcademicView({ teachers, classes, onUpdateTeachers, onSelectClass }: {
   teachers: Teacher[],
   classes: Class[],
-  onUpdateTeachers: (newTeachers: Teacher[]) => void,
+  onUpdateTeachers?: (newTeachers: Teacher[]) => void,
   onSelectClass: (cls: Class) => void
 }) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -3441,14 +6053,16 @@ function TeachersAcademicView({ teachers, classes, onUpdateTeachers, onSelectCla
   );
 }
 
-function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, teachers, onUpdateTeachers }: { 
+function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, teachers, onUpdateTeachers, schoolSettings, showToast }: { 
   classes: Class[], 
   students: Student[],
   grades: Grade[],
   onUpdateGrades: (newGrades: Grade[]) => void,
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
   teachers: Teacher[],
-  onUpdateTeachers: (newTeachers: Teacher[]) => void
+  onUpdateTeachers?: (newTeachers: Teacher[]) => void,
+  schoolSettings?: SchoolSettings,
+  showToast?: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void
 }) {
   const [topTab, setTopTab] = useState<'Classes' | 'Teachers'>('Classes');
   const [selectedClass, setSelectedClass] = useState<Class | null>(null);
@@ -3480,7 +6094,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
     const currentGrades = [...grades];
     classStudents.forEach(student => {
       subjects.forEach(subject => {
-        (['MAC', 'NPT'] as const).forEach(type => {
+        (['AC1', 'AC2', 'AC3', 'MAC', 'NPT'] as const).forEach(type => {
           const exists = currentGrades.find(g => g.studentId === student.id && g.subjectId === subject && g.period === period && g.type === type);
           if (!exists) {
             currentGrades.push({
@@ -3503,20 +6117,39 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
     setIsEditingGrades(false);
   };
 
-  const updateLocalGrade = (studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT', value: number) => {
+  const updateLocalGrade = (studentId: string, subjectId: string, period: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT', value: number) => {
     const scale = selectedClass ? getGradeScale(selectedClass.level).max : 20;
     const clampedValue = Math.min(scale, Math.max(0, value));
     setLocalGrades(prev => {
+      let updated = prev.map(g => (g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === type) ? { ...g, value: clampedValue } : g);
       const existing = prev.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === type);
-      if (existing) {
-        return prev.map(g => (g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === type) ? { ...g, value: clampedValue } : g);
-      } else {
-        return [...prev, { studentId, subjectId, period, type, value: clampedValue }];
+      if (!existing) {
+        updated.push({ studentId, subjectId, period, type, value: clampedValue });
       }
+
+      if (['AC1', 'AC2', 'AC3'].includes(type)) {
+        const getVal = (t: 'AC1' | 'AC2' | 'AC3') => {
+          if (t === type) return clampedValue;
+          const f = updated.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === t);
+          return f ? f.value : (getGrade(studentId, subjectId, period, t) || 0);
+        };
+        const ac1 = getVal('AC1');
+        const ac2 = getVal('AC2');
+        const ac3 = getVal('AC3');
+        const newMac = Number(((ac1 + ac2 + ac3) / 3).toFixed(1));
+        const macExist = updated.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === 'MAC');
+        if (macExist) {
+          updated = updated.map(g => (g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === 'MAC') ? { ...g, value: newMac } : g);
+        } else {
+          updated.push({ studentId, subjectId, period, type: 'MAC', value: newMac });
+        }
+      }
+
+      return updated;
     });
   };
 
-  const getGradeValue = (studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT' = 'MAC') => {
+  const getGradeValue = (studentId: string, subjectId: string, period: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT' = 'MAC') => {
     if (isEditingGrades) {
       const local = localGrades.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === type);
       return local ? local.value : getGrade(studentId, subjectId, period, type);
@@ -3650,7 +6283,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
     const insignia = await loadAngolaInsignia();
     let startY = 28;
     if (insignia) {
-      doc.addImage(insignia, 'PNG', 14, 10, 15, 15);
+      doc.addImage(insignia, getImageFormat(insignia), 14, 10, 15, 15);
       doc.setFontSize(14);
       doc.text(title, 34, 15);
       doc.setFontSize(10);
@@ -4000,8 +6633,20 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
                   <button onClick={exportToExcel} className="p-2.5 text-neutral-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all" title="Exportar Excel">
                     <FileDown size={20} />
                   </button>
-                  <button onClick={exportToPDF} className="p-2.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all" title="Exportar PDF">
+                  <button onClick={exportToPDF} className="p-2.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all" title="Exportar PDF (Pauta Actual)">
                     <FileDown size={20} />
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (selectedClass && schoolSettings) {
+                        const classStudents = students.filter(s => s.classId === selectedClass.id).sort((a,b) => a.name.localeCompare(b.name));
+                        generateUnifiedClassPautasPDF(selectedClass, classStudents, getGrade, schoolSettings, showToast);
+                      }
+                    }} 
+                    className="p-2.5 text-neutral-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all" 
+                    title="Exportar PDF Unificado (Todas as Disciplinas para Arquivo Impresso)"
+                  >
+                    <FileText size={20} />
                   </button>
                 </div>
               </div>
@@ -4173,19 +6818,21 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
 );
 }
 
-function FinanceView({ students, payments, expenses = [], classes, onAddPayment, onAddExpense, onDeleteExpense, onUpdateExpense, confirmAction, currentUser }: { 
+function FinanceView({ students, payments, expenses = [], classes, onAddPayment, onAddExpense, onDeleteExpense, onUpdateExpense, confirmAction, currentUser, schoolName, schoolSettings }: { 
   students: Student[], 
   payments: Payment[], 
   expenses?: Expense[], 
   classes: Class[], 
-  onAddPayment: (p: Payment) => void,
-  onAddExpense: (e: Expense) => void,
-  onDeleteExpense: (id: string) => void,
-  onUpdateExpense: (e: Expense) => void,
+  onAddPayment?: (p: Payment) => void,
+  onAddExpense?: (e: Expense) => void,
+  onDeleteExpense?: (id: string) => void,
+  onUpdateExpense?: (e: Expense) => void,
   confirmAction: (title: string, message: string, onConfirm: () => void) => void,
-  currentUser: any
+  currentUser: any,
+  schoolName?: string,
+  schoolSettings?: SchoolSettings
 }) {
-  const [activeSubTab, setActiveSubTab] = useState<'entradas' | 'saidas'>('entradas');
+  const [activeSubTab, setActiveSubTab] = useState<'entradas' | 'saidas' | 'caixa' | 'atrasos'>('entradas');
   const [isPaying, setIsPaying] = useState(false);
   const [isAddingExpense, setIsAddingExpense] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -4216,25 +6863,29 @@ function FinanceView({ students, payments, expenses = [], classes, onAddPayment,
 
   const generateReceiptPDF = async (payment: Payment, student: Student, cls: Class | undefined) => {
     const doc = new jsPDF();
-    const insignia = await loadAngolaInsignia();
+    const insignia = await loadAngolaInsignia(schoolSettings?.logoBase64);
     
     let textStartY = 20;
     let startLineY = 35;
     
     if (insignia) {
-      doc.addImage(insignia, 'PNG', 95, 10, 20, 20);
-      textStartY = 37;
-      startLineY = 52;
+      try {
+        doc.addImage(insignia, getImageFormat(insignia), 95, 10, 20, 20);
+        textStartY = 37;
+        startLineY = 52;
+      } catch (e) {
+        console.error('Erro ao adicionar logótipo ao recibo:', e);
+      }
     }
     
     // Header
     doc.setFontSize(14);
     doc.setTextColor(20, 20, 20);
-    doc.text('RECIBO DE PAGAMENTO', 105, textStartY, { align: 'center' });
+    doc.text(schoolSettings?.nomeEscola || schoolName || 'RECIBO DE PAGAMENTO', 105, textStartY, { align: 'center' });
     
     doc.setFontSize(12);
     doc.setTextColor(100, 100, 100);
-    doc.text('Sistema de Gestão Escolar', 105, textStartY + 8, { align: 'center' });
+    doc.text('RECIBO DE PAGAMENTO', 105, textStartY + 8, { align: 'center' });
     
     // Receipt Info
     doc.setDrawColor(230, 230, 230);
@@ -4301,7 +6952,7 @@ function FinanceView({ students, payments, expenses = [], classes, onAddPayment,
     let startY = 30;
     
     if (insignia) {
-      doc.addImage(insignia, 'PNG', 95, 10, 20, 20);
+      doc.addImage(insignia, getImageFormat(insignia), 95, 10, 20, 20);
       textStartY = 37;
       startY = 44;
     }
@@ -4365,7 +7016,7 @@ function FinanceView({ students, payments, expenses = [], classes, onAddPayment,
     let startY = 30;
     
     if (insignia) {
-      doc.addImage(insignia, 'PNG', 95, 10, 20, 20);
+      doc.addImage(insignia, getImageFormat(insignia), 95, 10, 20, 20);
       textStartY = 37;
       startY = 44;
     }
@@ -4465,14 +7116,16 @@ function FinanceView({ students, payments, expenses = [], classes, onAddPayment,
                   className="pl-11 pr-4 py-3 bg-white border border-neutral-200 rounded-2xl text-sm w-full sm:w-64 outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all font-medium"
                 />
               </div>
-              <button 
-                onClick={() => setIsPaying(true)}
-                className="bg-amber-600 hover:bg-amber-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-amber-100 active:scale-95 no-print"
-                style={{ display: currentUser?.role === 'Professor' ? 'none' : 'flex' }}
-              >
-                <DollarSign size={20} />
-                Efectuar Pagamento
-              </button>
+              {onAddPayment && (
+                <button 
+                  onClick={() => setIsPaying(true)}
+                  className="bg-amber-600 hover:bg-amber-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-amber-100 active:scale-95 no-print"
+                  style={{ display: currentUser?.role === 'Professor' ? 'none' : 'flex' }}
+                >
+                  <DollarSign size={20} />
+                  Efectuar Pagamento
+                </button>
+              )}
             </>
           ) : (
             <>
@@ -4515,13 +7168,15 @@ function FinanceView({ students, payments, expenses = [], classes, onAddPayment,
                   className="pl-11 pr-4 py-3 bg-white border border-neutral-200 rounded-2xl text-sm w-full sm:w-64 outline-none focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500 transition-all font-medium"
                 />
               </div>
-              <button 
-                onClick={() => setIsAddingExpense(true)}
-                className="bg-rose-600 hover:bg-rose-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-rose-100 active:scale-95 no-print"
-              >
-                <Plus size={20} />
-                Registar Gasto / Saída
-              </button>
+              {onAddExpense && (
+                <button 
+                  onClick={() => setIsAddingExpense(true)}
+                  className="bg-rose-600 hover:bg-rose-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-rose-100 active:scale-95 no-print"
+                >
+                  <Plus size={20} />
+                  Registar Gasto / Saída
+                </button>
+              )}
             </>
           )}
         </div>
@@ -4550,6 +7205,28 @@ function FinanceView({ students, payments, expenses = [], classes, onAddPayment,
           )}
         >
           Saídas / Gastos
+        </button>
+        <button
+          onClick={() => setActiveSubTab('caixa')}
+          className={cn(
+            "px-6 py-3 border-b-2 font-black uppercase tracking-wider text-xs transition-all",
+            activeSubTab === 'caixa' 
+              ? "border-blue-600 text-blue-600 bg-blue-50/30" 
+              : "border-transparent text-neutral-400 hover:text-neutral-600"
+          )}
+        >
+          Relatório de Caixa
+        </button>
+        <button
+          onClick={() => setActiveSubTab('atrasos')}
+          className={cn(
+            "px-6 py-3 border-b-2 font-black uppercase tracking-wider text-xs transition-all",
+            activeSubTab === 'atrasos' 
+              ? "border-amber-600 text-amber-600 bg-amber-50/30" 
+              : "border-transparent text-neutral-400 hover:text-neutral-600"
+          )}
+        >
+          Alunos em Atraso
         </button>
       </div>
 
@@ -4701,17 +7378,19 @@ function FinanceView({ students, payments, expenses = [], classes, onAddPayment,
                         >
                           <Pencil size={16} />
                         </button>
-                        <button 
-                          onClick={() => confirmAction(
-                            'Eliminar Gasto',
-                            `Tem a certeza que deseja eliminar o gasto "${expense.description}" no valor de ${expense.amount.toLocaleString()} AKZ?`,
-                            () => onDeleteExpense(expense.id)
-                          )}
-                          className="p-2 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                          title="Eliminar"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        {onDeleteExpense && (
+                          <button 
+                            onClick={() => confirmAction(
+                              'Eliminar Gasto',
+                              `Tem a certeza que deseja eliminar o gasto "${expense.description}" no valor de ${expense.amount.toLocaleString()} AKZ?`,
+                              () => onDeleteExpense(expense.id)
+                            )}
+                            className="p-2 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                            title="Eliminar"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -4728,9 +7407,158 @@ function FinanceView({ students, payments, expenses = [], classes, onAddPayment,
           </div>
         </div>
       )}
+      {activeSubTab === 'caixa' && (
+        <div className="bg-white rounded-[32px] border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-neutral-100 flex justify-between items-center bg-blue-50/50">
+            <div>
+              <h3 className="text-xl font-black text-blue-900 tracking-tight">Relatório de Caixa Geral</h3>
+              <p className="text-xs font-bold text-blue-700/60 uppercase tracking-widest mt-1">Transações ordenadas por data</p>
+            </div>
+            <button 
+              onClick={() => window.print()}
+              className="bg-white border border-neutral-200 text-neutral-600 px-4 py-2 rounded-xl flex items-center justify-center gap-2 font-bold transition-all hover:bg-neutral-50 active:scale-95 no-print"
+            >
+              <Printer size={16} /> Imprimir
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[800px]">
+              <thead>
+                <tr className="bg-neutral-50/50 border-b border-neutral-100">
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Data</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Tipo</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Descrição</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest text-right">Valor</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-50">
+                {[
+                  ...filteredPayments.map(p => ({ 
+                    id: `p-${p.id}`, 
+                    date: p.date, 
+                    type: 'entrada', 
+                    desc: `${p.service} - ${students.find(s => s.id === p.studentId)?.name || 'N/A'}`,
+                    amount: p.amount 
+                  })),
+                  ...filteredExpenses.map(e => ({ 
+                    id: `e-${e.id}`, 
+                    date: e.date, 
+                    type: 'saida', 
+                    desc: e.description,
+                    amount: -e.amount 
+                  }))
+                ].sort((a, b) => new Date(b.date.split('/').reverse().join('-')).getTime() - new Date(a.date.split('/').reverse().join('-')).getTime()).map(tx => (
+                  <tr key={tx.id} className="hover:bg-neutral-50/50 transition-colors">
+                    <td className="px-8 py-5 text-sm font-bold text-neutral-500">{tx.date}</td>
+                    <td className="px-8 py-5">
+                      <span className={cn(
+                        "px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest",
+                        tx.type === 'entrada' ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                      )}>
+                        {tx.type === 'entrada' ? 'Entrada' : 'Saída'}
+                      </span>
+                    </td>
+                    <td className="px-8 py-5 font-bold text-neutral-900">{tx.desc}</td>
+                    <td className={cn(
+                      "px-8 py-5 text-right font-black",
+                      tx.type === 'entrada' ? "text-emerald-600" : "text-rose-600"
+                    )}>
+                      {tx.type === 'entrada' ? '+' : ''}{tx.amount.toLocaleString()} AKZ
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {activeSubTab === 'atrasos' && (
+        <div className="bg-white rounded-[32px] border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-neutral-100 bg-amber-50/50 flex justify-between items-center">
+            <div>
+              <h3 className="text-xl font-black text-amber-900 tracking-tight">Controlo de Alunos em Atraso</h3>
+              <p className="text-xs font-bold text-amber-700/60 uppercase tracking-widest mt-1">Alunos sem pagamento de propina no mês atual</p>
+            </div>
+            <button 
+              onClick={() => window.print()}
+              className="bg-white border border-neutral-200 text-neutral-600 px-4 py-2 rounded-xl flex items-center justify-center gap-2 font-bold transition-all hover:bg-neutral-50 active:scale-95 no-print"
+            >
+              <Printer size={16} /> Imprimir
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead>
+                <tr className="bg-neutral-50/50 border-b border-neutral-100">
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Aluno</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Classe</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Encarregado</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Telefone</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Estado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-50">
+                {students.filter(student => {
+                  const currentMonth = new Date().toLocaleString('pt-PT', { month: 'long' });
+                  const hasPaidThisMonth = payments.some(p => p.studentId === student.id && (p.service.toLowerCase().includes('propina') || p.service.toLowerCase().includes('mensalidade')) && p.month?.toLowerCase() === currentMonth.toLowerCase());
+                  return !hasPaidThisMonth;
+                }).map(student => {
+                  const cls = classes.find(c => c.id === student.classId);
+                  return (
+                    <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors">
+                      <td className="px-8 py-5 font-bold text-neutral-900">{student.name}</td>
+                      <td className="px-8 py-5 text-sm font-bold text-neutral-500">{cls?.name || 'N/A'}</td>
+                      <td className="px-8 py-5 text-sm font-bold text-neutral-500">{student.guardianName || 'N/A'}</td>
+                      <td className="px-8 py-5 text-sm font-bold text-neutral-500">{student.guardianPhone || 'N/A'}</td>
+                      <td className="px-8 py-5">
+                        <span className="bg-rose-100 text-rose-700 px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-widest">Atrasado</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {activeSubTab === 'atrasos' && (
+        <div className="bg-white rounded-[32px] border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-neutral-100 bg-amber-50/50">
+            <h3 className="text-xl font-black text-amber-900 tracking-tight">Controlo de Alunos em Atraso</h3>
+            <p className="text-xs font-bold text-amber-700/60 uppercase tracking-widest mt-1">Alunos com pagamentos pendentes</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead>
+                <tr className="bg-neutral-50/50 border-b border-neutral-100">
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Aluno</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Classe</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Último Pagamento</th>
+                  <th className="px-8 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Estado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-50">
+                {students.slice(0, 5).map(student => {
+                  const cls = classes.find(c => c.id === student.classId);
+                  return (
+                    <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors">
+                      <td className="px-8 py-5 font-bold text-neutral-900">{student.name}</td>
+                      <td className="px-8 py-5 text-sm font-bold text-neutral-500">{cls?.name || 'N/A'}</td>
+                      <td className="px-8 py-5 text-sm font-bold text-neutral-500">-</td>
+                      <td className="px-8 py-5">
+                        <span className="bg-rose-100 text-rose-700 px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-widest">Pendente</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
-      {isPaying && (
-        <PaymentModal 
+      {isPaying && onAddPayment && (
+        <PaymentModal schoolName={schoolName} 
           students={students} 
           classes={classes} 
           onClose={() => setIsPaying(false)} 
@@ -4874,117 +7702,12 @@ function ExpenseModal({ expense, onClose, onAddExpense, onUpdateExpense }: {
   );
 }
 
-function PaymentModal({ students, classes, onClose, onAddPayment }: {
-  students: Student[],
-  classes: Class[],
-  onClose: () => void,
-  onAddPayment: (p: Payment) => void
-}) {
-  const [selectedClassId, setSelectedClassId] = useState(classes[0]?.id || '');
-  const [service, setService] = useState('Propina');
-  
-  const classStudents = students.filter(s => s.classId === selectedClassId);
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4">
-      <motion.div 
-        initial={{ scale: 0.95, opacity: 0, y: 20 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        className="bg-white rounded-[24px] sm:rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden border border-white/20 max-h-[95vh] flex flex-col"
-      >
-        <div className="p-6 sm:p-10 border-b border-neutral-100 flex items-center justify-between shrink-0 bg-neutral-50/50">
-          <div>
-            <h3 className="text-xl sm:text-2xl font-black text-neutral-900 tracking-tight">Novo Pagamento</h3>
-            <p className="text-[10px] sm:text-xs font-bold text-neutral-400 uppercase tracking-widest mt-1">Registo de serviços e propinas</p>
-          </div>
-          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-900 p-2 sm:p-3 hover:bg-white rounded-2xl transition-all shadow-sm border border-transparent hover:border-neutral-100">
-            <X size={24} />
-          </button>
-        </div>
-        <form className="p-6 sm:p-10 space-y-6 sm:space-y-8 overflow-y-auto flex-1" onSubmit={(e) => {
-          e.preventDefault();
-          const formData = new FormData(e.currentTarget);
-          const newPayment: Payment = {
-            id: Math.random().toString(36).substr(2, 9),
-            studentId: formData.get('studentId') as string,
-            service: formData.get('service') as string,
-            month: (formData.get('service') as string) === 'Propina' ? formData.get('month') as string : undefined,
-            amount: Number(formData.get('amount')),
-            date: new Date().toISOString().split('T')[0],
-            status: 'Pago',
-            receiptNumber: `REC-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
-          };
-          onAddPayment(newPayment);
-          onClose();
-        }}>
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Seleccionar Classe</label>
-              <select 
-                value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl outline-none focus:ring-4 focus:ring-amber-500/5 focus:border-amber-500 transition-all font-bold"
-              >
-                {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Seleccionar Aluno</label>
-              <select name="studentId" className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl outline-none focus:ring-4 focus:ring-amber-500/5 focus:border-amber-500 transition-all font-bold">
-                {classStudents.length > 0 ? (
-                  classStudents.map(s => <option key={s.id} value={s.id}>{s.name}</option>)
-                ) : (
-                  <option disabled>Nenhum aluno nesta classe</option>
-                )}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Tipo de Serviço</label>
-              <select 
-                name="service" 
-                value={service}
-                onChange={(e) => setService(e.target.value)}
-                className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl outline-none focus:ring-4 focus:ring-amber-500/5 focus:border-amber-500 transition-all font-bold"
-              >
-                <option value="Propina">Propina Mensal</option>
-                <option value="Matrícula">Matrícula</option>
-                <option value="Confirmação">Confirmação</option>
-                <option value="Uniforme">Uniforme</option>
-                <option value="Transporte">Transporte</option>
-                <option value="Outros">Outros</option>
-              </select>
-            </div>
-            {service === 'Propina' && (
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Mês de Referência</label>
-                <select name="month" className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl outline-none focus:ring-4 focus:ring-amber-500/5 focus:border-amber-500 transition-all font-bold">
-                  {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-            )}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Valor do Pagamento (AKZ)</label>
-              <input required name="amount" type="number" defaultValue="15000" className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl outline-none focus:ring-4 focus:ring-amber-500/5 focus:border-amber-500 transition-all font-black text-emerald-600" />
-            </div>
-          </div>
-          <div className="flex flex-col sm:flex-row justify-end gap-4 pt-6 sm:pt-10 border-t border-neutral-100">
-            <button type="button" onClick={onClose} className="px-8 py-4 text-neutral-500 font-bold hover:text-neutral-900 transition-colors order-2 sm:order-1">Cancelar</button>
-            <button type="submit" disabled={classStudents.length === 0} className="bg-amber-600 text-white px-10 py-4 rounded-2xl font-black shadow-xl shadow-amber-100 active:scale-95 transition-all hover:bg-amber-700 order-1 sm:order-2 disabled:opacity-50 disabled:cursor-not-allowed">
-              Confirmar Pagamento
-            </button>
-          </div>
-        </form>
-      </motion.div>
-    </div>
-  );
-}
-
 function TeachersView({ teachers, classes, onAddTeacher, onUpdateTeacher, onDeleteTeacher, showToast }: { 
   teachers: Teacher[],
   classes: Class[],
-  onAddTeacher: (t: Teacher) => void,
-  onUpdateTeacher: (t: Teacher) => void,
-  onDeleteTeacher: (id: string) => void,
+  onAddTeacher?: (t: Teacher) => void,
+  onUpdateTeacher?: (t: Teacher) => void,
+  onDeleteTeacher?: (id: string) => void,
   showToast: (m: string, t?: any) => void
 }) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -5042,13 +7765,15 @@ function TeachersView({ teachers, classes, onAddTeacher, onUpdateTeacher, onDele
             <FileSpreadsheet size={18} />
             Excel
           </button>
-          <button 
-            onClick={() => setIsAdding(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-emerald-100 active:scale-95"
-          >
-            <Plus size={20} />
-            Novo Professor
-          </button>
+          {onAddTeacher && (
+            <button 
+              onClick={() => setIsAdding(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-emerald-100 active:scale-95"
+            >
+              <Plus size={20} />
+              Novo Professor
+            </button>
+          )}
         </div>
       </div>
 
@@ -5099,12 +7824,14 @@ function TeachersView({ teachers, classes, onAddTeacher, onUpdateTeacher, onDele
               >
                 <Pencil size={16} />
               </button>
-              <button 
-                onClick={() => onDeleteTeacher(teacher.id)}
-                className="p-2 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-              >
-                <Trash2 size={16} />
-              </button>
+              {onDeleteTeacher && (
+                <button 
+                  onClick={() => onDeleteTeacher(teacher.id)}
+                  className="p-2 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -5354,15 +8081,233 @@ function BackupView({
   );
 }
 
-function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, currentUser, schools, classes }: { 
+function AuditView({ 
+  logs, 
+  onClearLogs 
+}: { 
+  logs: AuditLog[], 
+  onClearLogs: () => void 
+}) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [roleFilter, setRoleFilter] = useState('Todos');
+  const [actionFilter, setActionFilter] = useState('Todos');
+
+  const filteredLogs = logs.filter(log => {
+    const matchesSearch = 
+      log.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      log.userEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (log.details || '').toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesRole = roleFilter === 'Todos' || log.userRole === roleFilter;
+    const matchesAction = actionFilter === 'Todos' || 
+      (actionFilter === 'Login/Logout' && (log.action === 'Login' || log.action === 'Logout')) ||
+      (actionFilter === 'Acesso' && log.action === 'Acesso ao Sistema') ||
+      (actionFilter === 'Criação' && log.action.startsWith('Criar')) ||
+      (actionFilter === 'Actualização' && log.action.startsWith('Actualizar')) ||
+      (actionFilter === 'Eliminação' && log.action.startsWith('Eliminar'));
+
+    return matchesSearch && matchesRole && matchesAction;
+  });
+
+  const uniqueUsers = Array.from(new Set(logs.map(l => l.userEmail))).length;
+
+  return (
+    <div className="space-y-6 sm:space-y-8 max-w-6xl mx-auto">
+      {/* Title */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-3xl font-black text-neutral-900 tracking-tight">Auditoria de Acesso</h2>
+          <p className="text-neutral-500 font-bold text-sm text-neutral-500">Monitorização de acessos e actividades em tempo real</p>
+        </div>
+        {logs.length > 0 && (
+          <button
+            onClick={onClearLogs}
+            className="px-5 py-2.5 bg-rose-50 border border-rose-200 text-rose-600 rounded-2xl font-black text-xs hover:bg-rose-100 transition-all active:scale-95 flex items-center gap-2 self-start sm:self-center"
+          >
+            <Trash2 size={14} />
+            Limpar Histórico
+          </button>
+        )}
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+        <div className="bg-white p-6 rounded-[32px] border border-neutral-200 shadow-sm flex items-center gap-5">
+          <div className="w-12 h-12 bg-neutral-100 rounded-2xl flex items-center justify-center text-neutral-600">
+            <Clock size={20} />
+          </div>
+          <div>
+            <span className="text-[10px] font-black text-neutral-400 uppercase tracking-wider block mb-0.5">Total de Registos</span>
+            <span className="text-2xl font-black text-neutral-900 leading-none">{logs.length}</span>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-[32px] border border-neutral-200 shadow-sm flex items-center gap-5">
+          <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
+            <Users size={20} />
+          </div>
+          <div>
+            <span className="text-[10px] font-black text-neutral-400 uppercase tracking-wider block mb-0.5">Utilizadores Únicos</span>
+            <span className="text-2xl font-black text-neutral-900 leading-none">{uniqueUsers}</span>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-[32px] border border-neutral-200 shadow-sm flex items-center gap-5">
+          <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
+            <Activity size={20} />
+          </div>
+          <div>
+            <span className="text-[10px] font-black text-neutral-400 uppercase tracking-wider block mb-0.5">Última Actividade</span>
+            <span className="text-xs font-black text-neutral-900 truncate max-w-[200px] block">
+              {logs[0] ? `${logs[0].userName} (${logs[0].action})` : 'Sem registos'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Search and Filters */}
+      <div className="bg-white p-6 rounded-[32px] border border-neutral-200 shadow-sm space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" size={16} />
+            <input
+              type="text"
+              placeholder="Pesquisar por utilizador, acção..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-bold outline-none focus:border-neutral-400 transition-all"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-black text-neutral-400 uppercase tracking-wider whitespace-nowrap">Grupo:</span>
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-bold outline-none"
+            >
+              <option value="Todos">Todos os Grupos</option>
+              <option value="Super-Administrador">Super-Administrador</option>
+              <option value="Administrador">Administrador</option>
+              <option value="Secretário">Secretário</option>
+              <option value="Financeiro">Financeiro</option>
+              <option value="Professor">Professor</option>
+              <option value="Aluno">Aluno</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-black text-neutral-400 uppercase tracking-wider whitespace-nowrap">Acção:</span>
+            <select
+              value={actionFilter}
+              onChange={(e) => setActionFilter(e.target.value)}
+              className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-bold outline-none"
+            >
+              <option value="Todos">Todas as Acções</option>
+              <option value="Login/Logout">Login / Logout</option>
+              <option value="Acesso">Acesso ao Sistema</option>
+              <option value="Criação">Criação (Criar...)</option>
+              <option value="Actualização">Actualização (Actualizar...)</option>
+              <option value="Eliminação">Eliminação (Eliminar...)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Logs Table */}
+      <div className="bg-white rounded-[40px] border border-neutral-200 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-neutral-100 bg-neutral-50/50">
+                <th className="p-4 sm:p-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest pl-6">Data e Hora</th>
+                <th className="p-4 sm:p-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest">Utilizador</th>
+                <th className="p-4 sm:p-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest">Função</th>
+                <th className="p-4 sm:p-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest">Acção</th>
+                <th className="p-4 sm:p-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest pr-6">Detalhes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="p-10 text-center text-neutral-400 font-bold text-sm">
+                    Nenhum registo de auditoria encontrado.
+                  </td>
+                </tr>
+              ) : (
+                filteredLogs.map((log) => {
+                  let badgeColor = "bg-neutral-100 text-neutral-600";
+                  if (log.action === "Login" || log.action === "Acesso ao Sistema") {
+                    badgeColor = "bg-emerald-50 text-emerald-600 border border-emerald-100";
+                  } else if (log.action === "Logout") {
+                    badgeColor = "bg-neutral-100 text-neutral-600 border border-neutral-200";
+                  } else if (log.action.startsWith("Criar")) {
+                    badgeColor = "bg-blue-50 text-blue-600 border border-blue-100";
+                  } else if (log.action.startsWith("Actualizar")) {
+                    badgeColor = "bg-amber-50 text-amber-600 border border-amber-100";
+                  } else if (log.action.startsWith("Eliminar")) {
+                    badgeColor = "bg-rose-50 text-rose-600 border border-rose-100";
+                  }
+
+                  let roleBadgeColor = "bg-neutral-100 text-neutral-600";
+                  if (log.userRole === "Super-Administrador") {
+                    roleBadgeColor = "bg-purple-100 text-purple-700 font-black";
+                  } else if (log.userRole === "Administrador") {
+                    roleBadgeColor = "bg-blue-100 text-blue-700 font-black";
+                  } else if (log.userRole === "Secretário") {
+                    roleBadgeColor = "bg-teal-100 text-teal-700 font-black";
+                  } else if (log.userRole === "Financeiro") {
+                    roleBadgeColor = "bg-emerald-100 text-emerald-700 font-black";
+                  } else if (log.userRole === "Professor") {
+                    roleBadgeColor = "bg-amber-100 text-amber-700 font-black";
+                  }
+
+                  return (
+                    <tr key={log.id} className="border-b border-neutral-100 hover:bg-neutral-50/50 transition-colors">
+                      <td className="p-4 sm:p-5 text-xs font-mono text-neutral-500 font-bold pl-6">{log.timestamp}</td>
+                      <td className="p-4 sm:p-5 text-xs font-black text-neutral-900">
+                        <div>
+                          <div className="leading-tight">{log.userName}</div>
+                          <div className="text-[10px] font-normal text-neutral-400 mt-0.5">{log.userEmail}</div>
+                        </div>
+                      </td>
+                      <td className="p-4 sm:p-5 text-xs">
+                        <span className={cn("px-2.5 py-1 rounded-full text-[10px]", roleBadgeColor)}>
+                          {log.userRole}
+                        </span>
+                      </td>
+                      <td className="p-4 sm:p-5 text-xs">
+                        <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider", badgeColor)}>
+                          {log.action}
+                        </span>
+                      </td>
+                      <td className="p-4 sm:p-5 text-xs font-bold text-neutral-500 max-w-xs truncate pr-6" title={log.details}>
+                        {log.details || 'N/A'}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, currentUser, schools, classes, students }: { 
   users: SystemUser[], 
-  onAddUser: (u: SystemUser) => void, 
-  onUpdateUser: (u: SystemUser) => void, 
-  onDeleteUser: (id: string) => void,
+  onAddUser?: (u: SystemUser) => void, 
+  onUpdateUser?: (u: SystemUser) => void, 
+  onDeleteUser?: (id: string) => void,
   showToast: (message: string, type?: 'success' | 'error' | 'info' | 'warning') => void,
   currentUser: any,
+  schoolName?: string,
   schools: School[],
-  classes: Class[]
+  classes: Class[],
+  students: Student[]
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -5387,13 +8332,15 @@ function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, cu
             className="w-full pl-12 pr-4 py-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
           />
         </div>
-        <button 
-          onClick={() => setIsAdding(true)}
-          className="bg-neutral-900 text-white px-8 py-3.5 rounded-2xl font-black flex items-center justify-center gap-3 hover:bg-neutral-800 transition-all active:scale-95 shadow-xl shadow-neutral-200"
-        >
-          <UserPlus size={20} />
-          Novo Utilizador
-        </button>
+        {onAddUser && (
+          <button 
+            onClick={() => setIsAdding(true)}
+            className="bg-neutral-900 text-white px-8 py-3.5 rounded-2xl font-black flex items-center justify-center gap-3 hover:bg-neutral-800 transition-all active:scale-95 shadow-xl shadow-neutral-200"
+          >
+            <UserPlus size={20} />
+            Novo Utilizador
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -5430,15 +8377,17 @@ function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, cu
                 </div>
               </div>
               <div className="flex gap-2">
-                <button 
-                  onClick={() => setEditingUser(user)}
-                  className="p-2 text-neutral-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
-                >
-                  <Pencil size={16} />
-                </button>
-                {currentUser.role === 'Super-Administrador' && (
+                {(currentUser.role === 'Super-Administrador' || (currentUser.role === 'Administrador' && user.role !== 'Super-Administrador')) && (
                   <button 
-                    onClick={() => onDeleteUser(user.id)}
+                    onClick={() => setEditingUser(user)}
+                    className="p-2 text-neutral-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
+                  >
+                    <Pencil size={16} />
+                  </button>
+                )}
+                {(currentUser.role === 'Super-Administrador' || (currentUser.role === 'Administrador' && user.role !== 'Super-Administrador')) && (
+                  <button 
+                    onClick={() => onDeleteUser && onDeleteUser(user.id)}
                     className="p-2 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
                   >
                     <Trash2 size={16} />
@@ -5456,10 +8405,11 @@ function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, cu
           currentUser={currentUser}
           schools={schools}
           classes={classes}
+          students={students}
           onClose={() => { setIsAdding(false); setEditingUser(null); }}
           onSave={(u) => {
-            if (editingUser) onUpdateUser(u);
-            else onAddUser(u);
+            if (editingUser) onUpdateUser && onUpdateUser(u);
+            else onAddUser && onAddUser(u);
             setIsAdding(false);
             setEditingUser(null);
           }}
@@ -5469,17 +8419,61 @@ function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, cu
   );
 }
 
-function UserModal({ user, onClose, onSave, currentUser, schools, classes }: { 
+function UserModal({ user, onClose, onSave, currentUser, schools, classes, students }: { 
   user: SystemUser | null, 
   onClose: () => void, 
   onSave: (u: SystemUser) => void,
   currentUser: any,
+  schoolName?: string,
   schools: School[],
-  classes: Class[]
+  classes: Class[],
+  students: Student[]
 }) {
   const [formData, setFormData] = useState<Partial<SystemUser>>(
     user || { name: '', email: '', role: 'Secretário', status: 'Activo', schoolId: currentUser?.schoolId }
   );
+
+  const [selectedClassId, setSelectedClassId] = useState<string>(() => {
+    if (user?.role === 'Aluno') {
+      if (user.assignedClassIds && user.assignedClassIds.length > 0) {
+        return user.assignedClassIds[0];
+      }
+      if (user.studentId) {
+        const s = students.find(x => x.id === user.studentId);
+        if (s) return s.classId;
+      }
+    }
+    return '';
+  });
+
+  const handleClassChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const classId = e.target.value;
+    setSelectedClassId(classId);
+    setFormData(prev => ({
+      ...prev,
+      assignedClassIds: classId ? [classId] : [],
+      studentId: '',
+      name: ''
+    }));
+  };
+
+  const handleStudentChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const sId = e.target.value;
+    const student = students.find(s => s.id === sId);
+    if (student) {
+      setFormData(prev => ({
+        ...prev,
+        studentId: sId,
+        name: student.name
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        studentId: '',
+        name: ''
+      }));
+    }
+  };
 
   useEffect(() => {
     if (formData.role === 'Professor' && !formData.assignedClassIds) {
@@ -5517,8 +8511,9 @@ function UserModal({ user, onClose, onSave, currentUser, schools, classes }: {
                 type="text" 
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full pl-12 pr-4 py-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
-                placeholder="Ex: João Manuel"
+                disabled={formData.role === 'Aluno'}
+                className="w-full pl-12 pr-4 py-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all disabled:opacity-75 disabled:bg-neutral-100/50"
+                placeholder={formData.role === 'Aluno' ? "Selecione a turma e o aluno abaixo..." : "Ex: João Manuel"}
               />
             </div>
           </div>
@@ -5550,30 +8545,66 @@ function UserModal({ user, onClose, onSave, currentUser, schools, classes }: {
               />
             </div>
           </div>
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Turmas Atribuídas</label>
-            <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
-              {classes
-                .filter(c => c.schoolId === formData.schoolId)
-                .map(c => (
-                  <label key={c.id} className="flex items-center gap-2 p-3 bg-neutral-50 rounded-xl cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      checked={formData.assignedClassIds?.includes(c.id) || false}
-                      onChange={(e) => {
-                        const newClassIds = e.target.checked 
-                          ? [...(formData.assignedClassIds || []), c.id]
-                          : (formData.assignedClassIds || []).filter(id => id !== c.id);
-                        setFormData({ ...formData, assignedClassIds: newClassIds });
-                      }}
-                      className="rounded text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <span className="text-xs font-bold text-neutral-900">{c.name}</span>
-                  </label>
-                ))
-              }
+
+          {formData.role !== 'Aluno' ? (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Turmas Atribuídas</label>
+              <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
+                {classes
+                  .filter(c => c.schoolId === formData.schoolId)
+                  .map(c => (
+                    <label key={c.id} className="flex items-center gap-2 p-3 bg-neutral-50 rounded-xl cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={formData.assignedClassIds?.includes(c.id) || false}
+                        onChange={(e) => {
+                          const newClassIds = e.target.checked 
+                            ? [...(formData.assignedClassIds || []), c.id]
+                            : (formData.assignedClassIds || []).filter(id => id !== c.id);
+                          setFormData({ ...formData, assignedClassIds: newClassIds });
+                        }}
+                        className="rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="text-xs font-bold text-neutral-900">{c.name}</span>
+                    </label>
+                  ))
+                }
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="space-y-4 p-4 bg-emerald-50/50 border border-emerald-100 rounded-3xl">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-emerald-700 uppercase tracking-widest ml-1">Turma do Aluno</label>
+                <select 
+                  value={selectedClassId}
+                  onChange={handleClassChange}
+                  className="w-full p-3.5 bg-white border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
+                >
+                  <option value="">Selecione a Turma</option>
+                  {classes
+                    .filter(c => c.schoolId === formData.schoolId)
+                    .map(c => <option key={c.id} value={c.id}>{c.name}</option>)
+                  }
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-emerald-700 uppercase tracking-widest ml-1">Nome do Aluno Matriculado</label>
+                <select 
+                  value={formData.studentId || ''}
+                  onChange={handleStudentChange}
+                  disabled={!selectedClassId}
+                  className="w-full p-3.5 bg-white border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all disabled:opacity-50"
+                >
+                  <option value="">Selecione o Aluno</option>
+                  {students
+                    .filter(s => s.classId === selectedClassId && s.schoolId === formData.schoolId)
+                    .map(s => <option key={s.id} value={s.id}>{s.name} {s.bi ? `(BI: ${s.bi})` : ''}</option>)
+                  }
+                </select>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Cargo / Role</label>
@@ -5582,7 +8613,7 @@ function UserModal({ user, onClose, onSave, currentUser, schools, classes }: {
                 onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
                 className="w-full p-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all appearance-none"
               >
-                {currentUser?.role === 'Super-Administrador' && (
+                {(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') && (
                   <>
                     <option value="Administrador">Administrador</option>
                     <option value="Secretário">Secretário</option>
@@ -5653,16 +8684,17 @@ function ClassesView({
   currentUser
 }: { 
   classes: Class[], 
-  onAddClass: (c: Class) => void,
-  onUpdateClass: (c: Class) => void,
-  onDeleteClass: (id: string) => void,
+  onAddClass?: (c: Class) => void,
+  onUpdateClass?: (c: Class) => void,
+  onDeleteClass?: (id: string) => void,
   students: Student[],
   setActiveView: (view: View) => void,
   setSelectedListClassId: (id: string) => void,
   schoolSettings: SchoolSettings,
   setSchoolSettings: (s: SchoolSettings) => void,
   onExportPDF?: (cls: Class, paperSize?: 'A4' | 'A3' | 'A5') => void,
-  currentUser: any
+  currentUser: any,
+  schoolName?: string
 } ) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingClass, setEditingClass] = useState<Class | null>(null);
@@ -5840,14 +8872,16 @@ function ClassesView({
             <FileDown size={20} />
             Exportar Turmas
           </button>
-          <button 
-            onClick={() => setIsAdding(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3.5 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-emerald-100 active:scale-95"
-            style={{ display: currentUser?.role === 'Professor' ? 'none' : 'flex' }}
-          >
-            <Plus size={20} />
-            Nova Turma
-          </button>
+          {onAddClass && (
+            <button 
+              onClick={() => setIsAdding(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3.5 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-emerald-100 active:scale-95"
+              style={{ display: currentUser?.role === 'Professor' ? 'none' : 'flex' }}
+            >
+              <Plus size={20} />
+              Nova Turma
+            </button>
+          )}
         </div>
       </div>
 
@@ -5898,7 +8932,7 @@ function ClassesView({
                     >
                       <Pencil size={18} />
                     </button>
-                    {currentUser?.role !== 'Professor' && (
+                    {currentUser?.role !== 'Professor' && onDeleteClass && (
                       <button 
                         onClick={() => onDeleteClass(cls.id)}
                         className="p-2 text-neutral-400 hover:text-rose-600 rounded-xl hover:bg-rose-50 transition-all"
@@ -6125,13 +9159,42 @@ function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, 
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (isLogin) {
       const users = JSON.parse(localStorage.getItem('edugest_users') || '[]');
-      const user = users.find((u: any) => u.email === email && u.password === password);
+      let user = users.find((u: any) => u.email === email && u.password === password);
+      
+      if (!user) {
+        try {
+          const { data: dbUser, error: dbError } = await supabase
+            .from('utilizadores')
+            .select('*')
+            .eq('email', email)
+            .maybeSingle();
+
+          if (!dbError && dbUser) {
+            if (dbUser.password === password) {
+              user = {
+                id: dbUser.id,
+                email: dbUser.email,
+                password: dbUser.password,
+                name: dbUser.name,
+                role: dbUser.role,
+                status: dbUser.status,
+                schoolId: dbUser.school_id
+              };
+              users.push(user);
+              localStorage.setItem('edugest_users', JSON.stringify(users));
+            }
+          }
+        } catch (err) {
+          console.error('Erro ao autenticar via Supabase:', err);
+        }
+      }
+
       if (user) {
         if (user.status === 'Inactivo') {
           setError('A sua conta está inactiva. Contacte o administrador.');
@@ -6144,9 +9207,25 @@ function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, 
     } else {
       const users = JSON.parse(localStorage.getItem('edugest_users') || '[]');
       if (users.find((u: any) => u.email === email)) {
-        setError('Este e-mail já está registado.');
+        setError('Este e-mail já está registado localmente.');
         return;
       }
+
+      try {
+        const { data: existingUser } = await supabase
+          .from('utilizadores')
+          .select('id')
+          .eq('email', email)
+          .maybeSingle();
+          
+        if (existingUser) {
+          setError('Este e-mail já está registado na base de dados remota.');
+          return;
+        }
+      } catch (err) {
+        console.warn('Supabase check skipped:', err);
+      }
+
       let schoolId = undefined;
       
       if (role === 'Administrador') {
@@ -6166,6 +9245,24 @@ function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, 
         localStorage.setItem('edugest_schools', JSON.stringify(schools));
         localStorage.setItem('edugest_selected_school_id', newSchoolId);
         schoolId = newSchoolId;
+
+        try {
+          await pushItemToSupabaseWithRetry({
+            type: 'CRIAR_ESCOLA',
+            data: {
+              id: newSchoolId,
+              name: schoolName,
+              status: 'Activo',
+              republica: 'República de Angola',
+              governoProvincia: 'Governo da Província do Cuanza-Sul',
+              administracaoMunicipal: 'Administração Municipal',
+              direccaoMunicipal: 'Direcção Municipal da Educação',
+              anoLectivo: '2023/2024'
+            }
+          });
+        } catch (err) {
+          console.error('Erro ao guardar escola no Supabase via proxy:', err);
+        }
       }
 
       const newUser = { 
@@ -6179,6 +9276,23 @@ function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, 
       };
       users.push(newUser);
       localStorage.setItem('edugest_users', JSON.stringify(users));
+
+      try {
+        await pushItemToSupabaseWithRetry({
+          type: 'CADASTRAR_UTILIZADOR',
+          data: {
+            id: newUser.id,
+            name: newUser.name,
+            email: newUser.email,
+            password: newUser.password,
+            role: newUser.role,
+            status: 'Activo',
+            schoolId: newUser.schoolId || null
+          }
+        });
+      } catch (err) {
+        console.error('Erro ao guardar utilizador no Supabase via proxy:', err);
+      }
       
       setIsLogin(true);
       setError('Cadastro realizado com sucesso! Por favor, faça o login.');
@@ -6406,15 +9520,17 @@ function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, 
   );
 }
 
-function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, schoolSettings, setSchoolSettings, currentUser }: { 
+function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, schoolSettings, setSchoolSettings, currentUser, showToast }: { 
   classes: Class[], 
   students: Student[],
   grades: Grade[],
   onUpdateGrades: (newGrades: Grade[]) => void,
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
   schoolSettings: SchoolSettings,
   setSchoolSettings: (s: SchoolSettings) => void,
-  currentUser: any
+  currentUser: any,
+  schoolName?: string,
+  showToast?: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void
 }) {
   const availableClasses = currentUser.role === 'Professor' 
     ? classes.filter(c => currentUser.assignedClassIds?.includes(c.id))
@@ -6441,7 +9557,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
   const handleStartEditing = () => {
     const currentGrades = [...grades];
     classStudents.forEach(student => {
-      (['MAC', 'NPT'] as const).forEach(type => {
+      (['AC1', 'AC2', 'AC3', 'MAC', 'NPT'] as const).forEach(type => {
         const exists = currentGrades.find(g => g.studentId === student.id && g.subjectId === selectedSubject && g.period === selectedPeriod && g.type === type);
         if (!exists) {
           currentGrades.push({
@@ -6463,14 +9579,36 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
     setIsEditing(false);
   };
 
-  const updateLocalGrade = (studentId: string, type: 'MAC' | 'NPT', value: number) => {
+  const updateLocalGrade = (studentId: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT', value: number) => {
     const scale = selectedClass ? getGradeScale(selectedClass.level).max : 20;
     const clampedValue = Math.min(scale, Math.max(0, value));
-    setLocalGrades(prev => prev.map(g => 
-      (g.studentId === studentId && g.subjectId === selectedSubject && g.period === selectedPeriod && g.type === type) 
-      ? { ...g, value: clampedValue } 
-      : g
-    ));
+    setLocalGrades(prev => {
+      let updated = prev.map(g => 
+        (g.studentId === studentId && g.subjectId === selectedSubject && g.period === selectedPeriod && g.type === type) 
+        ? { ...g, value: clampedValue } 
+        : g
+      );
+
+      if (['AC1', 'AC2', 'AC3'].includes(type)) {
+        const getVal = (t: 'AC1' | 'AC2' | 'AC3') => {
+          if (t === type) return clampedValue;
+          const found = updated.find(g => g.studentId === studentId && g.subjectId === selectedSubject && g.period === selectedPeriod && g.type === t);
+          return found ? found.value : (getGrade(studentId, selectedSubject, selectedPeriod, t) || 0);
+        };
+        const ac1 = getVal('AC1');
+        const ac2 = getVal('AC2');
+        const ac3 = getVal('AC3');
+        const newMac = Number(((ac1 + ac2 + ac3) / 3).toFixed(1));
+
+        updated = updated.map(g => 
+          (g.studentId === studentId && g.subjectId === selectedSubject && g.period === selectedPeriod && g.type === 'MAC')
+          ? { ...g, value: newMac }
+          : g
+        );
+      }
+
+      return updated;
+    });
   };
 
   const getMT = (studentId: string, subjectId: string, period: string) => {
@@ -6599,6 +9737,18 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
           {viewMode === 'summary' && (
             <div className="flex gap-3">
               <button 
+                onClick={() => {
+                  if (selectedClass) {
+                    generateUnifiedClassPautasPDF(selectedClass, classStudents, getGrade, schoolSettings, showToast);
+                  }
+                }}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3.5 rounded-2xl font-black flex items-center justify-center gap-2.5 transition-all active:scale-95 shadow-md shadow-blue-200"
+                title="Exportar PDF unificado contendo pautas de todas as disciplinas da turma"
+              >
+                <FileText size={20} />
+                PDF Unificado da Turma
+              </button>
+              <button 
                 onClick={handleExportExcel}
                 className="bg-emerald-50 text-emerald-600 px-6 py-3.5 rounded-2xl font-black flex items-center justify-center gap-3 hover:bg-emerald-100 transition-all active:scale-95"
               >
@@ -6645,13 +9795,18 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                 {viewMode === 'entry' ? (
                   <>
                     {!(isExamClass(selectedClass?.level) && selectedPeriod === 'Exame') && (
-                      <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">MAC</th>
+                      <>
+                        <th className="px-3 py-3 sm:px-4 sm:py-4 print:px-1 print:py-1 text-center font-bold text-neutral-500">AC1</th>
+                        <th className="px-3 py-3 sm:px-4 sm:py-4 print:px-1 print:py-1 text-center font-bold text-neutral-500">AC2</th>
+                        <th className="px-3 py-3 sm:px-4 sm:py-4 print:px-1 print:py-1 text-center font-bold text-neutral-500">AC3</th>
+                        <th className="px-3 py-3 sm:px-4 sm:py-4 print:px-1 print:py-1 text-center font-black text-emerald-700 bg-emerald-50/50">MAC</th>
+                      </>
                     )}
                     {!(isExamClass(selectedClass?.level) && selectedPeriod === '3º Trimestre') && (
-                      <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">{selectedPeriod === 'Exame' ? 'Exame Nacional' : 'NPT'}</th>
+                      <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">{selectedPeriod === 'Exame' ? 'Exame Nacional' : 'NPT'}</th>
                     )}
                     {selectedPeriod !== 'Exame' && (
-                      <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">MT</th>
+                      <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-blue-700 bg-blue-50/50">MT</th>
                     )}
                   </>
                 ) : (
@@ -6667,16 +9822,19 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
             <tbody className="divide-y divide-neutral-50">
               {classStudents.map((student, index) => {
                 if (viewMode === 'entry') {
-                  const getLocalOrGrade = (s: string, sub: string, p: string, t: 'MAC' | 'NPT') => isEditing 
+                  const getLocalOrGrade = (s: string, sub: string, p: string, t: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT') => isEditing 
                     ? localGrades.find(g => g.studentId === s && g.subjectId === sub && g.period === p && g.type === t)?.value ?? getGrade(s, sub, p, t)
                     : getGrade(s, sub, p, t);
                   
+                  const ac1 = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'AC1');
+                  const ac2 = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'AC2');
+                  const ac3 = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'AC3');
                   const mac = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'MAC');
                   const npt = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'NPT');
 
                   const mt = calculateMT(student.id, selectedSubject, selectedPeriod, getLocalOrGrade, selectedClass?.level);
-
                   const exam = isExamClass(selectedClass?.level);
+                  const { max: maxScale, threshold } = getGradeScale(selectedClass?.level || '');
 
                   return (
                     <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors group">
@@ -6686,40 +9844,85 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                         <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-tighter">{student.bi}</p>
                       </td>
                       {!(exam && selectedPeriod === 'Exame') && (
-                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">
-                          {isEditing ? (
-                            <input 
-                              type="number" 
-                              min="0" max={getGradeScale(selectedClass?.level || '').max}
-                              value={mac}
-                              onChange={(e) => updateLocalGrade(student.id, 'MAC', Number(e.target.value))}
-                              className={cn("w-16 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", mac >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600")}
-                            />
-                          ) : (
-                            <span className={cn("text-sm font-black", mac >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600")}>{mac}</span>
-                          )}
-                        </td>
+                        <>
+                          <td className="px-2 py-3 text-center">
+                            {isEditing ? (
+                              <input 
+                                type="number" 
+                                min="0" max={maxScale} step="0.1"
+                                value={ac1}
+                                onChange={(e) => updateLocalGrade(student.id, 'AC1', Number(e.target.value))}
+                                className={cn("w-14 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", ac1 >= threshold ? "text-neutral-900" : "text-rose-600")}
+                                title="Avaliação Contínua 1"
+                              />
+                            ) : (
+                              <span className={cn("text-sm font-bold", ac1 >= threshold ? "text-neutral-900" : "text-rose-600")}>{ac1}</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-3 text-center">
+                            {isEditing ? (
+                              <input 
+                                type="number" 
+                                min="0" max={maxScale} step="0.1"
+                                value={ac2}
+                                onChange={(e) => updateLocalGrade(student.id, 'AC2', Number(e.target.value))}
+                                className={cn("w-14 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", ac2 >= threshold ? "text-neutral-900" : "text-rose-600")}
+                                title="Avaliação Contínua 2"
+                              />
+                            ) : (
+                              <span className={cn("text-sm font-bold", ac2 >= threshold ? "text-neutral-900" : "text-rose-600")}>{ac2}</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-3 text-center">
+                            {isEditing ? (
+                              <input 
+                                type="number" 
+                                min="0" max={maxScale} step="0.1"
+                                value={ac3}
+                                onChange={(e) => updateLocalGrade(student.id, 'AC3', Number(e.target.value))}
+                                className={cn("w-14 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", ac3 >= threshold ? "text-neutral-900" : "text-rose-600")}
+                                title="Avaliação Contínua 3"
+                              />
+                            ) : (
+                              <span className={cn("text-sm font-bold", ac3 >= threshold ? "text-neutral-900" : "text-rose-600")}>{ac3}</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-3 text-center bg-emerald-50/20">
+                            {isEditing ? (
+                              <input 
+                                type="number" 
+                                min="0" max={maxScale} step="0.1"
+                                value={mac}
+                                onChange={(e) => updateLocalGrade(student.id, 'MAC', Number(e.target.value))}
+                                className={cn("w-16 p-2 bg-emerald-100/50 border border-emerald-300 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", mac >= threshold ? "text-emerald-950" : "text-rose-600")}
+                                title="Média de Avaliação Contínua (MAC = (AC1+AC2+AC3)/3)"
+                              />
+                            ) : (
+                              <span className={cn("text-sm font-black", mac >= threshold ? "text-emerald-950 font-black" : "text-rose-600 font-black")}>{mac}</span>
+                            )}
+                          </td>
+                        </>
                       )}
                       {!(exam && selectedPeriod === '3º Trimestre') && (
-                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">
+                        <td className="px-2 py-3 text-center">
                           {isEditing ? (
                             <input 
                               type="number" 
-                              min="0" max={getGradeScale(selectedClass?.level || '').max}
+                              min="0" max={maxScale} step="0.1"
                               value={npt}
                               onChange={(e) => updateLocalGrade(student.id, 'NPT', Number(e.target.value))}
-                              className={cn("w-16 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", npt >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600")}
+                              className={cn("w-16 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", npt >= threshold ? "text-neutral-900" : "text-rose-600")}
                             />
                           ) : (
-                            <span className={cn("text-sm font-black", npt >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600")}>{npt}</span>
+                            <span className={cn("text-sm font-black", npt >= threshold ? "text-neutral-900" : "text-rose-600")}>{npt}</span>
                           )}
                         </td>
                       )}
                       {selectedPeriod !== 'Exame' && (
-                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">
+                        <td className="px-2 py-3 text-center bg-blue-50/20">
                           <span className={cn(
                             "text-sm font-black",
-                            mt >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"
+                            mt >= threshold ? "text-blue-950 font-black" : "text-rose-600 font-black"
                           )}>{mt.toFixed(1)}</span>
                         </td>
                       )}
@@ -6793,12 +9996,13 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   classes: Class[], 
   students: Student[],
   grades: Grade[],
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
   schoolSettings: SchoolSettings,
   setSchoolSettings: (s: SchoolSettings) => void,
   onIssueCertificate: (studentId: string, bulkIds?: string[]) => void,
   showToast: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void,
-  currentUser: any
+  currentUser: any,
+  schoolName?: string
 }) {
   const availableClasses = currentUser.role === 'Professor' 
     ? classes.filter(c => currentUser.assignedClassIds?.includes(c.id))
@@ -6903,6 +10107,18 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
           >
             <Award size={20} />
             Emitir Certificados (Aptos)
+          </button>
+          <button 
+            onClick={() => {
+              if (selectedClass) {
+                generateUnifiedClassPautasPDF(selectedClass, classStudents, getGrade, schoolSettings, showToast);
+              }
+            }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3.5 rounded-2xl font-black flex items-center justify-center gap-2.5 transition-all active:scale-95 shadow-md shadow-blue-200"
+            title="Exportar PDF unificado contendo pautas de todas as disciplinas da turma para arquivo impresso"
+          >
+            <FileText size={20} />
+            PDF Unificado (Arquivo Impresso)
           </button>
           <button 
             onClick={handleExportExcel}
@@ -7076,15 +10292,22 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   );
 }
 
-function BoletimView({ students, classes, grades, getGrade, schoolSettings, setSchoolSettings }: { 
+function BoletimView({ students, classes, grades, getGrade, schoolSettings, setSchoolSettings, currentUser }: { 
   students: Student[],
   classes: Class[],
   grades: Grade[],
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
   schoolSettings: SchoolSettings,
-  setSchoolSettings: (s: SchoolSettings) => void
+  setSchoolSettings: (s: SchoolSettings) => void,
+  currentUser?: SystemUser | null
 }) {
-  const [selectedStudentId, setSelectedStudentId] = useState<string>('');
+  const [selectedStudentId, setSelectedStudentId] = useState<string>(() => {
+    if (currentUser?.role === 'Aluno' && students.length > 0) {
+      const s = students.find(x => x.id === currentUser.studentId || x.name === currentUser.name);
+      return s ? s.id : students[0].id;
+    }
+    return currentUser?.role === 'Aluno' && students.length > 0 ? students[0].id : '';
+  });
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredStudents = students.filter(s => 
@@ -7125,43 +10348,55 @@ function BoletimView({ students, classes, grades, getGrade, schoolSettings, setS
     <div className="space-y-8">
       {!selectedStudentId ? (
         <div className="bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm max-w-2xl mx-auto">
-          <h3 className="text-2xl font-black text-neutral-900 mb-6">Pesquisar Aluno</h3>
-          <div className="relative mb-8">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" size={20} />
-            <input 
-              type="text" 
-              placeholder="Nome ou BI do aluno..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-4 py-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
-            />
-          </div>
-          <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
-            {filteredStudents.map(student => (
-              <button 
-                key={student.id}
-                onClick={() => setSelectedStudentId(student.id)}
-                className="w-full p-4 flex items-center justify-between bg-neutral-50 hover:bg-emerald-50 border border-neutral-100 rounded-2xl transition-all group"
-              >
-                <div className="text-left">
-                  <p className="text-sm font-black text-neutral-900 group-hover:text-emerald-700">{student.name}</p>
-                  <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">{student.bi}</p>
-                </div>
-                <ChevronRight size={18} className="text-neutral-300 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all" />
-              </button>
-            ))}
-          </div>
+          {currentUser?.role === 'Aluno' && students.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-neutral-500 font-medium">Ainda não está associado a nenhum registo de aluno. Por favor, contacte a secretaria.</p>
+            </div>
+          ) : (
+            <>
+              <h3 className="text-2xl font-black text-neutral-900 mb-6">Pesquisar Aluno</h3>
+              <div className="relative mb-8">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" size={20} />
+                <input 
+                  type="text" 
+                  placeholder="Nome ou BI do aluno..." 
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-12 pr-4 py-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
+                />
+              </div>
+              <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
+                {filteredStudents.map(student => (
+                  <button 
+                    key={student.id}
+                    onClick={() => setSelectedStudentId(student.id)}
+                    className="w-full p-4 flex items-center justify-between bg-neutral-50 hover:bg-emerald-50 border border-neutral-100 rounded-2xl transition-all group"
+                  >
+                    <div className="text-left">
+                      <p className="text-sm font-black text-neutral-900 group-hover:text-emerald-700">{student.name}</p>
+                      <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">{student.bi}</p>
+                    </div>
+                    <ChevronRight size={18} className="text-neutral-300 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all" />
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-8">
           <div className="flex items-center justify-between">
-            <button 
-              onClick={() => setSelectedStudentId('')}
-              className="flex items-center gap-2 text-neutral-500 font-bold hover:text-neutral-900 transition-colors"
-            >
-              <ChevronRight className="rotate-180" size={20} />
-              Voltar à Pesquisa
-            </button>
+            {currentUser?.role !== 'Aluno' ? (
+              <button 
+                onClick={() => setSelectedStudentId('')}
+                className="flex items-center gap-2 text-neutral-500 font-bold hover:text-neutral-900 transition-colors"
+              >
+                <ChevronRight className="rotate-180" size={20} />
+                Voltar à Pesquisa
+              </button>
+            ) : (
+              <div />
+            )}
             <div className="flex gap-3">
               <button 
                 onClick={handleExportExcel}
@@ -7339,12 +10574,12 @@ function CertificatesView({ students, classes, templates, onUpdateTemplates, sch
   students: Student[],
   classes: Class[],
   templates: CertificateTemplate[],
-  onUpdateTemplates: (t: CertificateTemplate[]) => void,
+  onUpdateTemplates?: (t: CertificateTemplate[]) => void,
   schoolSettings: SchoolSettings,
   initialStudentId?: string,
   initialTab?: 'list' | 'editor' | 'issue',
   initialBulkIds?: string[],
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT') => number
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number
 }) {
   const [activeTab, setActiveTab] = useState<'list' | 'editor' | 'issue'>(initialTab || 'list');
   const [selectedTemplate, setSelectedTemplate] = useState<CertificateTemplate | null>(templates[0] || null);
@@ -7496,13 +10731,17 @@ function TemplateEditor({ template, onSave, onCancel }: {
       label: type === 'custom' ? 'Novo Texto' : 
              type === 'studentName' ? 'Nome do Aluno' :
              type === 'className' ? 'Turma' :
-             type === 'level' ? 'Classe' : 'Data',
+             type === 'level' ? 'Classe' : 
+             type === 'date' ? 'Data' :
+             type === 'gradeSubject' ? 'Nota de Matemática' :
+             type === 'gradeAverage' ? 'Média de Notas' : 'Resultado Final',
       x: 50,
       y: 50,
       fontSize: 24,
       fontWeight: 'bold',
       color: '#000000',
-      text: type === 'custom' ? 'Texto Personalizado' : undefined
+      text: type === 'custom' ? 'Texto Personalizado' : 
+            type === 'gradeSubject' ? 'Matemática' : undefined
     };
     setFields([...fields, newField]);
     setSelectedFieldId(newField.id);
@@ -7549,13 +10788,24 @@ function TemplateEditor({ template, onSave, onCancel }: {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Campos Dinâmicos</label>
-                <div className="flex gap-1">
-                  <button onClick={() => addField('studentName')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Nome do Aluno"><Users size={14} /></button>
-                  <button onClick={() => addField('className')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Turma"><Layers size={14} /></button>
-                  <button onClick={() => addField('date')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Data"><CalendarDays size={14} /></button>
-                  <button onClick={() => addField('custom')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Texto Fixo"><FileText size={14} /></button>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Dados Gerais</label>
+                  <div className="flex gap-1">
+                    <button onClick={() => addField('studentName')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Nome do Aluno"><Users size={14} /></button>
+                    <button onClick={() => addField('className')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Turma"><Layers size={14} /></button>
+                    <button onClick={() => addField('date')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Data"><CalendarDays size={14} /></button>
+                    <button onClick={() => addField('custom')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Texto Fixo"><FileText size={14} /></button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-neutral-100 pt-3">
+                  <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Notas (Pauta/Boletim)</label>
+                  <div className="flex gap-1">
+                    <button onClick={() => addField('gradeSubject')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Nota de Disciplina"><BookOpen size={14} /></button>
+                    <button onClick={() => addField('gradeAverage')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Média Anual"><TrendingUp size={14} /></button>
+                    <button onClick={() => addField('gradeResult')} className="p-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-600 hover:text-emerald-600 transition-all" title="Resultado Final"><Award size={14} /></button>
+                  </div>
                 </div>
               </div>
 
@@ -7592,6 +10842,22 @@ function TemplateEditor({ template, onSave, onCancel }: {
                         type="text" 
                         value={fields.find(f => f.id === selectedFieldId)?.text || ''}
                         onChange={(e) => updateField(selectedFieldId, { text: e.target.value })}
+                        className="w-full p-2 bg-neutral-50 border border-neutral-200 rounded-lg text-xs font-bold outline-none"
+                      />
+                    </div>
+                  )}
+
+                  {fields.find(f => f.id === selectedFieldId)?.type === 'gradeSubject' && (
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-neutral-400 uppercase tracking-widest ml-1">Disciplina (Pauta/Boletim)</label>
+                      <input 
+                        type="text" 
+                        value={fields.find(f => f.id === selectedFieldId)?.text || ''}
+                        onChange={(e) => updateField(selectedFieldId, { 
+                          text: e.target.value,
+                          label: `Nota de ${e.target.value}`
+                        })}
+                        placeholder="Ex: Matemática, Física"
                         className="w-full p-2 bg-neutral-50 border border-neutral-200 rounded-lg text-xs font-bold outline-none"
                       />
                     </div>
@@ -7718,7 +10984,7 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
   onBack: () => void,
   initialStudentId?: string,
   initialBulkIds?: string[],
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT') => number
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number
 }) {
   const [selectedStudentId, setSelectedStudentId] = useState(initialStudentId || '');
   const [searchTerm, setSearchTerm] = useState('');
@@ -7828,18 +11094,58 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
     }
   }, [selectedStudentId, selectedClass, schoolSettings]);
 
+  const resolveFieldValue = (student: Student | undefined, sClass: Class | undefined, type: string, customText?: string) => {
+    if (!student) return '';
+    if (type === 'studentName') return student.name;
+    if (type === 'className') return sClass?.name || '';
+    if (type === 'level') return sClass?.level || '';
+    if (type === 'date') return new Date().toLocaleDateString('pt-PT');
+    if (type === 'custom') return customText || '';
+    
+    if (type === 'gradeSubject') {
+      if (!sClass) return '--------';
+      const subjectName = customText || 'Matemática';
+      const classSubjects = getSubjectsForClass(sClass);
+      const dbSubject = classSubjects.find(s => 
+        s.toLowerCase() === subjectName.toLowerCase() || 
+        s.toLowerCase().includes(subjectName.toLowerCase()) ||
+        subjectName.toLowerCase().includes(s.toLowerCase())
+      ) || subjectName;
+      const annual = calculateAnnual(student.id, dbSubject, getGrade, sClass.level);
+      return annual > 0 ? `${Math.round(annual)} Valores` : '--------';
+    }
+    
+    if (type === 'gradeAverage') {
+      if (!sClass) return '--------';
+      const classSubjects = getSubjectsForClass(sClass);
+      if (classSubjects.length === 0) return '--------';
+      const mfd_global = classSubjects.reduce((acc, sub) => {
+        return acc + calculateAnnual(student.id, sub, getGrade, sClass.level);
+      }, 0) / classSubjects.length;
+      return `${mfd_global.toFixed(1)} Valores`;
+    }
+    
+    if (type === 'gradeResult') {
+      if (!sClass) return '--------';
+      const classSubjects = getSubjectsForClass(sClass);
+      if (classSubjects.length === 0) return '--------';
+      const mfd_global = classSubjects.reduce((acc, sub) => {
+        return acc + calculateAnnual(student.id, sub, getGrade, sClass.level);
+      }, 0) / classSubjects.length;
+      const threshold = getGradeScale(sClass.level || '').threshold;
+      return mfd_global >= threshold ? 'Aprovado' : 'Reprovado';
+    }
+    
+    return '';
+  };
+
   const filteredStudents = students.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
     s.bi.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const getFieldValue = (type: string, customText?: string) => {
-    if (type === 'studentName') return selectedStudent?.name || '[Nome do Aluno]';
-    if (type === 'className') return selectedClass?.name || '[Turma]';
-    if (type === 'level') return selectedClass?.level || '[Classe]';
-    if (type === 'date') return new Date().toLocaleDateString('pt-PT');
-    if (type === 'custom') return customText || '';
-    return '';
+    return resolveFieldValue(selectedStudent, selectedClass, type, customText);
   };
 
   const updateGradeValue = (subKey: string, field: 'c10' | 'c11' | 'c12', val: string) => {
@@ -7869,7 +11175,7 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
     return (
       <div 
         id={`cert-${student.id}`}
-        className="print-certificate-target bg-white text-neutral-900 font-serif relative border-[12px] border-double border-red-600 flex flex-col justify-between"
+        className="print-certificate-target bg-white text-neutral-900 font-serif relative border-[12px] border-double border-red-600 flex flex-col justify-between select-text"
         style={{
           width: '100%',
           maxWidth: '210mm',
@@ -7883,27 +11189,27 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
         {/* Top Header */}
         <div className="flex flex-col items-center text-center space-y-0.5">
           <img 
-            src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Coat_of_arms_of_Angola.svg/200px-Coat_of_arms_of_Angola.svg.png" 
-            alt="Brasão" 
-            className="w-10 h-10 object-contain mb-1"
+            src={schoolSettings.logoBase64 || "https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Coat_of_arms_of_Angola.svg/200px-Coat_of_arms_of_Angola.svg.png"} 
+            alt="Logomarca da Escola" 
+            className="w-12 h-12 object-contain mb-1"
             referrerPolicy="no-referrer"
           />
-          <h2 className="text-[10px] font-bold uppercase tracking-wider text-neutral-800 leading-none">República de Angola</h2>
-          <h3 className="text-[9px] font-medium text-neutral-700 leading-none">Ministério da Educação</h3>
-          <h4 className="text-[9px] font-bold uppercase tracking-widest text-neutral-800 leading-none">Ensino Geral</h4>
+          <h2 contentEditable suppressContentEditableWarning className="text-[10px] font-bold uppercase tracking-wider text-neutral-800 leading-none outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 p-0.5 rounded transition-all">{schoolSettings.republica || "República de Angola"}</h2>
+          <h3 contentEditable suppressContentEditableWarning className="text-[9px] font-medium text-neutral-700 leading-none outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 p-0.5 rounded transition-all">{schoolSettings.direccaoMunicipal || "Ministério da Educação"}</h3>
+          <h4 contentEditable suppressContentEditableWarning className="text-[9px] font-bold uppercase tracking-widest text-neutral-800 leading-none outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 p-0.5 rounded transition-all">{schoolSettings.nomeEscola || "Ensino Geral"}</h4>
         </div>
 
         {/* Certificate Title */}
         <div className="text-center my-2">
-          <h1 className="text-xl font-black text-red-600 tracking-wider uppercase font-serif">Certificado de Habilitações</h1>
+          <h1 contentEditable suppressContentEditableWarning className="text-xl font-black text-red-600 tracking-wider uppercase font-serif outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 p-0.5 rounded transition-all">Certificado de Habilitações</h1>
         </div>
 
         {/* Certificate Text Body */}
         <div className="text-[9px] leading-relaxed text-justify text-neutral-800 px-2 space-y-1.5">
-          <p>
+          <p contentEditable suppressContentEditableWarning className="outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 p-1 rounded transition-all">
             <span className="font-bold uppercase">{certInfo.directorName}</span>, Director (a) da <span className="font-bold">{certInfo.schoolName}</span> {certInfo.schoolLocation}, declara em cumprimento do despacho no requerimento que fica arquivado nesta secretaria que, <span className="font-bold text-red-600 uppercase">{student.name}</span>, natural de <span className="font-bold">{certInfo.naturalidade}</span>, Município de <span className="font-bold">{certInfo.municipio}</span>, Província de <span className="font-bold">{certInfo.provincia}</span>, Filho de <span className="font-bold">{certInfo.fatherName}</span> e de <span className="font-bold">{certInfo.motherName}</span>, nascido aos <span className="font-bold">{student.birthDate || certInfo.birthDate}</span>, portador do B.I. nº <span className="font-bold">{student.bi}</span>, passado pelo arquivo de identificação de <span className="font-bold">{certInfo.biIssuer}</span>, aos <span className="font-bold">{certInfo.biIssueDate}</span>, válido até <span className="font-bold">{certInfo.biValidDate}</span>.
           </p>
-          <p>
+          <p contentEditable suppressContentEditableWarning className="outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 p-1 rounded transition-all">
             <span className="font-bold">Concluiu</span> nesta escola <span className="font-bold">{certInfo.schoolName}</span> ano lectivo de <span className="font-bold">{certInfo.anoLectivo}</span>, no termo e pauta nº <span className="font-bold">{certInfo.termoPauta}</span> no Curso de <span className="font-bold italic">{sClass?.course || certInfo.curso}</span>. Como resultado final de <span className="font-bold">{certInfo.resultado}</span> e Obteve as Seguintes Classificações:
           </p>
         </div>
@@ -7928,10 +11234,10 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
                 const gr = getGradeValue(sub.key);
                 return (
                   <tr key={sub.key} className="hover:bg-neutral-50">
-                    <td className="border border-black p-0.5 px-1 font-bold text-left uppercase text-[7px]">{sub.label}</td>
-                    <td className="border border-black p-0.5 text-center font-medium">{gr.c10}</td>
-                    <td className="border border-black p-0.5 text-center font-medium">{gr.c11}</td>
-                    <td className="border border-black p-0.5 text-center font-medium">{gr.c12}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 px-1 font-bold text-left uppercase text-[7px] outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{sub.label}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c10}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c11}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c12}</td>
                   </tr>
                 );
               })}
@@ -7944,10 +11250,10 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
                 const gr = getGradeValue(sub.key);
                 return (
                   <tr key={sub.key} className="hover:bg-neutral-50">
-                    <td className="border border-black p-0.5 px-1 font-bold text-left uppercase text-[7px]">{sub.label}</td>
-                    <td className="border border-black p-0.5 text-center font-medium">{gr.c10}</td>
-                    <td className="border border-black p-0.5 text-center font-medium">{gr.c11}</td>
-                    <td className="border border-black p-0.5 text-center font-medium">{gr.c12}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 px-1 font-bold text-left uppercase text-[7px] outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{sub.label}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c10}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c11}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c12}</td>
                   </tr>
                 );
               })}
@@ -7960,10 +11266,10 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
                 const gr = getGradeValue(sub.key);
                 return (
                   <tr key={sub.key} className="hover:bg-neutral-50">
-                    <td className="border border-black p-0.5 px-1 font-bold text-left uppercase text-[7px]">{sub.label}</td>
-                    <td className="border border-black p-0.5 text-center font-medium">{gr.c10}</td>
-                    <td className="border border-black p-0.5 text-center font-medium">{gr.c11}</td>
-                    <td className="border border-black p-0.5 text-center font-medium">{gr.c12}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 px-1 font-bold text-left uppercase text-[7px] outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{sub.label}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c10}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c11}</td>
+                    <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c12}</td>
                   </tr>
                 );
               })}
@@ -7973,7 +11279,7 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
 
         {/* Certificate Footer Text */}
         <div className="text-[9px] leading-relaxed text-justify text-neutral-800 px-2 mt-1">
-          <p>
+          <p contentEditable suppressContentEditableWarning className="outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 p-1 rounded transition-all">
             Por ser verdade e me ter sido solicitado e assim constar nos documentos arquivados passou-se o presente certificado que por mim vai assinado e autenticado com selo branco em uso neste estabelecimento de ensino. Escola <span className="font-bold">{certInfo.schoolName}</span> {certInfo.schoolLocation}, aos <span className="font-bold">{certInfo.dataEmissao}</span>.
           </p>
         </div>
@@ -7981,16 +11287,16 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
         {/* Signatures Block */}
         <div className="grid grid-cols-2 gap-6 text-center px-4 mt-3 relative">
           <div className="flex flex-col items-center">
-            <span className="font-bold text-[8.5px] uppercase tracking-wider text-neutral-800">O Subdirector Pedagógico</span>
+            <span contentEditable suppressContentEditableWarning className="font-bold text-[8.5px] uppercase tracking-wider text-neutral-800 outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 px-1 rounded">O Subdirector Pedagógico</span>
             <div className="w-full max-w-[150px] border-b border-dashed border-neutral-400 mt-8"></div>
-            <span className="text-neutral-900 mt-1 text-[8.5px] font-bold uppercase">{certInfo.subdirectorName}</span>
-            <span className="text-neutral-400 text-[6.5px] italic">(Assinatura legível)</span>
+            <span contentEditable suppressContentEditableWarning className="text-neutral-900 mt-1 text-[8.5px] font-bold uppercase outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 px-1 rounded">{certInfo.subdirectorName}</span>
+            <span contentEditable suppressContentEditableWarning className="text-neutral-400 text-[6.5px] italic outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 px-1 rounded">(Assinatura legível)</span>
           </div>
           <div className="flex flex-col items-center relative">
-            <span className="font-bold text-[8.5px] uppercase tracking-wider text-neutral-800">O Director Geral</span>
+            <span contentEditable suppressContentEditableWarning className="font-bold text-[8.5px] uppercase tracking-wider text-neutral-800 outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 px-1 rounded">O Director Geral</span>
             <div className="w-full max-w-[150px] border-b border-dashed border-neutral-400 mt-8"></div>
-            <span className="text-neutral-900 mt-1 text-[8.5px] font-bold uppercase">{certInfo.directorName}</span>
-            <span className="text-neutral-400 text-[6.5px] italic">(Assinatura legível)</span>
+            <span contentEditable suppressContentEditableWarning className="text-neutral-900 mt-1 text-[8.5px] font-bold uppercase outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 px-1 rounded">{certInfo.directorName}</span>
+            <span contentEditable suppressContentEditableWarning className="text-neutral-400 text-[6.5px] italic outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60 px-1 rounded">(Assinatura legível)</span>
             
             {/* Visual Stamp Area */}
             <div className="absolute right-0 bottom-[-5px] w-16 h-16 border-2 border-blue-600/20 rounded-full flex items-center justify-center text-blue-600/30 font-mono text-[5.5px] uppercase tracking-tighter rotate-12 select-none pointer-events-none">
@@ -8363,6 +11669,19 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
             </div>
           </div>
 
+          {/* Automatic & Direct Editable Hint Banner */}
+          <div className="bg-emerald-50 border border-emerald-100 rounded-[24px] p-4 flex items-start gap-3">
+            <div className="p-2 bg-emerald-500 text-white rounded-xl">
+              <Sparkles size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-black text-emerald-950 uppercase tracking-wide">Certificados Gerados Automaticamente & Editáveis</p>
+              <p className="text-[11px] text-emerald-800 leading-relaxed mt-0.5">
+                Os dados e notas do aluno são <span className="font-bold">preenchidos de forma automática</span> pelo sistema. Para além do formulário lateral, <span className="font-bold">pode clicar em qualquer texto, tabela ou nota diretamente no certificado abaixo para editá-lo</span> livremente antes de imprimir!
+              </p>
+            </div>
+          </div>
+
           {isBulkMode ? (
             <div className="space-y-8 print:space-y-0">
               {bulkIds.map(id => {
@@ -8392,12 +11711,7 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
                       }}
                     >
                       {template.fields.map(field => {
-                        let val = '';
-                        if (field.type === 'studentName') val = student.name;
-                        else if (field.type === 'className') val = sClass?.name || '';
-                        else if (field.type === 'level') val = sClass?.level || '';
-                        else if (field.type === 'date') val = new Date().toLocaleDateString('pt-PT');
-                        else if (field.type === 'custom') val = field.text || '';
+                        const val = resolveFieldValue(student, sClass, field.type, field.text);
 
                         return (
                           <div 
@@ -8518,13 +11832,14 @@ function TeacherPortalView({
   classes: Class[], 
   grades: Grade[],
   onUpdateGrades: (g: Grade[]) => void,
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
   schoolSettings: any,
   setSchoolSettings: (s: any) => void,
   showToast: (m: string, t?: 'success' | 'error') => void,
   onLogout: () => void,
   onExportPDF?: (cls: Class, paperSize?: 'A4' | 'A3' | 'A5') => void,
-  currentUser: any
+  currentUser: any,
+  schoolName?: string
 }) {
   const [activeTab, setActiveTab] = useState<'notas' | 'listas' | 'mini-pauta' | 'pauta'>('notas');
   const [selectedAssignment, setSelectedAssignment] = useState<TeacherAssignment | null>(teacher.assignments[0] || null);
@@ -8534,30 +11849,47 @@ function TeacherPortalView({
   const classStudents = students.filter(s => s.classId === selectedAssignment?.classId);
   const teacherClasses = classes.filter(c => teacher.assignments.some(a => a.classId === c.id));
 
-  const handleGradeChange = (studentId: string, type: 'MAC' | 'NPT', value: number) => {
+  const handleGradeChange = (studentId: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT', value: number) => {
     if (!selectedAssignment) return;
     
-    const newGrades = [...grades];
-    const index = newGrades.findIndex(g => 
-      g.studentId === studentId && 
-      g.subjectId === selectedAssignment.subject && 
-      g.period === selectedPeriod && 
-      g.type === type
-    );
-
+    let newGrades = [...grades];
     const newValue = Math.min(getGradeScale(currentClass?.level || '').max, Math.max(0, value));
 
-    if (index > -1) {
-      newGrades[index] = { ...newGrades[index], value: newValue };
-    } else {
-      newGrades.push({
-        studentId,
-        subjectId: selectedAssignment.subject,
-        period: selectedPeriod,
-        type,
-        value: newValue
-      });
+    const setSingleGrade = (t: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT', val: number) => {
+      const idx = newGrades.findIndex(g => 
+        g.studentId === studentId && 
+        g.subjectId === selectedAssignment.subject && 
+        g.period === selectedPeriod && 
+        g.type === t
+      );
+      if (idx > -1) {
+        newGrades[idx] = { ...newGrades[idx], value: val };
+      } else {
+        newGrades.push({
+          studentId,
+          subjectId: selectedAssignment.subject,
+          period: selectedPeriod,
+          type: t,
+          value: val
+        });
+      }
+    };
+
+    setSingleGrade(type, newValue);
+
+    if (['AC1', 'AC2', 'AC3'].includes(type)) {
+      const getVal = (t: 'AC1' | 'AC2' | 'AC3') => {
+        if (t === type) return newValue;
+        const item = newGrades.find(g => g.studentId === studentId && g.subjectId === selectedAssignment.subject && g.period === selectedPeriod && g.type === t);
+        return item ? item.value : (getGrade(studentId, selectedAssignment.subject, selectedPeriod, t) || 0);
+      };
+      const ac1 = getVal('AC1');
+      const ac2 = getVal('AC2');
+      const ac3 = getVal('AC3');
+      const macVal = Number(((ac1 + ac2 + ac3) / 3).toFixed(1));
+      setSingleGrade('MAC', macVal);
     }
+
     onUpdateGrades(newGrades);
   };
 
@@ -8626,6 +11958,7 @@ function TeacherPortalView({
             schoolSettings={schoolSettings} 
             setSchoolSettings={setSchoolSettings}
             currentUser={currentUser}
+            showToast={showToast}
           />
         )}
 
@@ -8722,55 +12055,101 @@ function TeacherPortalView({
                   <table className="w-full text-left border-collapse min-w-[600px]">
                     <thead>
                       <tr className="border-b border-neutral-100">
-                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">Nº</th>
-                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">Estudante</th>
-                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">MAC (Avaliação Contínua)</th>
-                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">NPT (Prova Trimestral)</th>
-                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">Média</th>
+                        <th className="px-3 py-3 text-center">Nº</th>
+                        <th className="px-4 py-3">Estudante</th>
+                        <th className="px-2 py-3 text-center">AC1</th>
+                        <th className="px-2 py-3 text-center">AC2</th>
+                        <th className="px-2 py-3 text-center">AC3</th>
+                        <th className="px-3 py-3 text-center bg-emerald-50/50 text-emerald-800">MAC</th>
+                        <th className="px-3 py-3 text-center">NPT</th>
+                        <th className="px-3 py-3 text-center bg-blue-50/50 text-blue-800">Média</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-50">
                       {classStudents.sort((a, b) => a.name.localeCompare(b.name)).map((student, idx) => {
-                        const mac = grades.find(g => g.studentId === student.id && g.subjectId === selectedAssignment.subject && g.period === selectedPeriod && g.type === 'MAC')?.value || 0;
-                        const npt = grades.find(g => g.studentId === student.id && g.subjectId === selectedAssignment.subject && g.period === selectedPeriod && g.type === 'NPT')?.value || 0;
+                        const getVal = (type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT') => {
+                          const found = grades.find(g => g.studentId === student.id && g.subjectId === selectedAssignment.subject && g.period === selectedPeriod && g.type === type);
+                          if (found) return found.value;
+                          if (type === 'MAC') {
+                            const ac1 = grades.find(g => g.studentId === student.id && g.subjectId === selectedAssignment.subject && g.period === selectedPeriod && g.type === 'AC1')?.value ?? 0;
+                            const ac2 = grades.find(g => g.studentId === student.id && g.subjectId === selectedAssignment.subject && g.period === selectedPeriod && g.type === 'AC2')?.value ?? 0;
+                            const ac3 = grades.find(g => g.studentId === student.id && g.subjectId === selectedAssignment.subject && g.period === selectedPeriod && g.type === 'AC3')?.value ?? 0;
+                            if (ac1 || ac2 || ac3) return Number(((ac1 + ac2 + ac3) / 3).toFixed(1));
+                          }
+                          return 0;
+                        };
+
+                        const ac1 = getVal('AC1');
+                        const ac2 = getVal('AC2');
+                        const ac3 = getVal('AC3');
+                        const mac = getVal('MAC');
+                        const npt = getVal('NPT');
                         const media = (mac + npt) / 2;
                         const threshold = getGradeScale(currentClass?.level || '').threshold;
+                        const maxVal = getGradeScale(currentClass?.level || '').max;
 
                         return (
                           <tr key={student.id} className="hover:bg-neutral-50/30 transition-colors">
-                            <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">{idx + 1}</td>
-                            <td className="px-8 py-5">
-                              <p className="font-bold text-neutral-900 tracking-tight">{student.name}</p>
+                            <td className="px-3 py-3 text-center text-sm font-bold text-neutral-400">{idx + 1}</td>
+                            <td className="px-4 py-3">
+                              <p className="font-bold text-neutral-900 tracking-tight text-sm">{student.name}</p>
                               <p className="text-[10px] font-bold text-neutral-400 uppercase">{student.bi}</p>
                             </td>
-                            <td className="px-8 py-5">
-                              <div className="flex justify-center">
-                                <input 
-                                  type="number" 
-                                  value={mac}
-                                  onChange={(e) => handleGradeChange(student.id, 'MAC', Number(e.target.value))}
-                                  className={cn("w-20 text-center py-3 bg-neutral-50 border border-neutral-200 rounded-xl font-black text-lg focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 outline-none transition-all", mac >= threshold ? "text-neutral-900" : "text-rose-600")}
-                                />
-                              </div>
+                            <td className="px-2 py-3 text-center">
+                              <input 
+                                type="number" 
+                                min="0" max={maxVal} step="0.1"
+                                value={ac1}
+                                onChange={(e) => handleGradeChange(student.id, 'AC1', Number(e.target.value))}
+                                className={cn("w-14 text-center py-2 bg-neutral-50 border border-neutral-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all", ac1 >= threshold ? "text-neutral-900" : "text-rose-600")}
+                                title="Avaliação Contínua 1"
+                              />
                             </td>
-                            <td className="px-8 py-5">
-                              <div className="flex justify-center">
-                                <input 
-                                  type="number" 
-                                  value={npt}
-                                  onChange={(e) => handleGradeChange(student.id, 'NPT', Number(e.target.value))}
-                                  className={cn("w-20 text-center py-3 bg-neutral-50 border border-neutral-200 rounded-xl font-black text-lg focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 outline-none transition-all", npt >= threshold ? "text-neutral-900" : "text-rose-600")}
-                                />
-                              </div>
+                            <td className="px-2 py-3 text-center">
+                              <input 
+                                type="number" 
+                                min="0" max={maxVal} step="0.1"
+                                value={ac2}
+                                onChange={(e) => handleGradeChange(student.id, 'AC2', Number(e.target.value))}
+                                className={cn("w-14 text-center py-2 bg-neutral-50 border border-neutral-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all", ac2 >= threshold ? "text-neutral-900" : "text-rose-600")}
+                                title="Avaliação Contínua 2"
+                              />
                             </td>
-                            <td className="px-8 py-5">
-                              <div className="flex justify-center">
-                                <div className={cn(
-                                  "w-16 h-16 rounded-2xl flex items-center justify-center font-black text-xl shadow-inner",
-                                  media >= threshold ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
-                                )}>
-                                  {media.toFixed(1)}
-                                </div>
+                            <td className="px-2 py-3 text-center">
+                              <input 
+                                type="number" 
+                                min="0" max={maxVal} step="0.1"
+                                value={ac3}
+                                onChange={(e) => handleGradeChange(student.id, 'AC3', Number(e.target.value))}
+                                className={cn("w-14 text-center py-2 bg-neutral-50 border border-neutral-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all", ac3 >= threshold ? "text-neutral-900" : "text-rose-600")}
+                                title="Avaliação Contínua 3"
+                              />
+                            </td>
+                            <td className="px-2 py-3 text-center bg-emerald-50/20">
+                              <input 
+                                type="number" 
+                                min="0" max={maxVal} step="0.1"
+                                value={mac}
+                                onChange={(e) => handleGradeChange(student.id, 'MAC', Number(e.target.value))}
+                                className={cn("w-16 text-center py-2 bg-emerald-100/50 border border-emerald-300 rounded-xl font-black text-sm focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all", mac >= threshold ? "text-emerald-950 font-black" : "text-rose-600 font-black")}
+                                title="Média de Avaliação Contínua"
+                              />
+                            </td>
+                            <td className="px-2 py-3 text-center">
+                              <input 
+                                type="number" 
+                                min="0" max={maxVal} step="0.1"
+                                value={npt}
+                                onChange={(e) => handleGradeChange(student.id, 'NPT', Number(e.target.value))}
+                                className={cn("w-16 text-center py-2 bg-neutral-50 border border-neutral-200 rounded-xl font-black text-sm focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all", npt >= threshold ? "text-neutral-900" : "text-rose-600")}
+                              />
+                            </td>
+                            <td className="px-3 py-3 text-center bg-blue-50/20">
+                              <div className={cn(
+                                "w-12 h-10 mx-auto rounded-xl flex items-center justify-center font-black text-sm",
+                                media >= threshold ? "bg-blue-100/60 text-blue-950" : "bg-rose-100/60 text-rose-700"
+                              )}>
+                                {media.toFixed(1)}
                               </div>
                             </td>
                           </tr>
