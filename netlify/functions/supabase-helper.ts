@@ -2,14 +2,14 @@ import { createClient } from '@supabase/supabase-js';
 
 // Supabase configuration details with robust environment variable fallbacks
 export const SUPABASE_URL = 
-  process.env.SUPABASE_URL || 
   process.env.VITE_SUPABASE_URL || 
+  process.env.SUPABASE_URL || 
   'https://fhrgnhhuolordpilluak.supabase.co';
 
 export const SUPABASE_ANON_KEY = 
+  process.env.VITE_SUPABASE_ANON_KEY || 
   process.env.SUPABASE_SERVICE_ROLE_KEY || 
   process.env.SUPABASE_ANON_KEY || 
-  process.env.VITE_SUPABASE_ANON_KEY || 
   'sb_publishable_v2rgrQIuuNzaHflL9qwyNg_24LB85yZ';
 
 // Initialize the Supabase Client
