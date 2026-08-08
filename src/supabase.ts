@@ -348,32 +348,229 @@ CREATE POLICY "Inserção/Actualização de notas por Professores e Admins"
 */
 `;
 
-// Helper: Test Supabase connection via the backend
+// Helper: Clean school ID to avoid invalid foreign key constraints
+function cleanSchoolId(id?: string | null): string | null {
+  if (!id || typeof id !== 'string' || id.trim() === '' || id.trim() === 's1') return null;
+  return id.trim();
+}
+
+function mapStudentToSupabase(s: any) {
+  return {
+    id: s.id,
+    name: s.name,
+    bi: s.bi || 'N/A',
+    birth_date: s.birthDate || null,
+    gender: s.gender || 'M',
+    guardian_name: s.guardianName || null,
+    guardian_phone: s.guardianPhone || null,
+    class_id: (s.classId && typeof s.classId === 'string' && s.classId.trim() !== '') ? s.classId.trim() : null,
+    enrollment_status: s.enrollmentStatus || 'Matriculado',
+    enrollment_date: s.enrollmentDate || null,
+    school_id: cleanSchoolId(s.schoolId),
+    residential_zone: s.residentialZone || null
+  };
+}
+
+// Helper: Test Supabase connection via backend with direct fallback
 export async function testConnection(): Promise<boolean> {
   try {
     const res = await fetch('/api/test-connection');
-    if (!res.ok) return false;
-    const data = await res.json();
-    return !!data.connected;
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data.connected === 'boolean') return data.connected;
+    }
   } catch (e) {
-    console.warn('Backend indisponível para testar conexão:', e);
+    // Backend API unavailable, fallback to direct client check
+  }
+  try {
+    const { error } = await supabase.from('escolas').select('count', { count: 'exact', head: true });
+    return !error;
+  } catch (e) {
     return false;
   }
 }
 
-// Pull complete database data from the backend
+// Pull complete database data from backend or direct Supabase client
 export async function pullFromSupabase() {
   try {
     const res = await fetch('/api/get-data');
-    if (!res.ok) return null;
-    return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      if (data) return data;
+    }
   } catch (err) {
-    console.warn('Servidor backend indisponível para obter dados:', err);
+    console.warn('Backend indisponível. Tentando leitura direta no Supabase...', err);
+  }
+
+  try {
+    const [
+      escolasRes,
+      turmasRes,
+      alunosRes,
+      professoresRes,
+      pautasRes,
+      pagamentosRes,
+      despesasRes,
+      utilizadoresRes,
+      comunicadosRes,
+      auditRes
+    ] = await Promise.all([
+      supabase.from('escolas').select('*'),
+      supabase.from('turmas').select('*'),
+      supabase.from('alunos').select('*'),
+      supabase.from('professores').select('*'),
+      supabase.from('pautas').select('*'),
+      supabase.from('pagamentos').select('*'),
+      supabase.from('despesas').select('*'),
+      supabase.from('utilizadores').select('*'),
+      supabase.from('comunicados').select('*'),
+      supabase.from('audit_logs').select('*')
+    ]);
+
+    if (escolasRes.error || turmasRes.error || alunosRes.error) {
+      console.warn('Nota: Tabelas ainda não inicializadas ou sem acesso no Supabase.');
+      return null;
+    }
+
+    return {
+      schools: (escolasRes.data || []).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        nif: s.nif,
+        address: s.address,
+        phone: s.phone,
+        email: s.email,
+        directorName: s.director_name,
+        subdirectorName: s.subdirector_name,
+        status: s.status,
+        republica: s.republica,
+        governoProvincia: s.governo_provincia,
+        administracaoMunicipal: s.administracao_municipal,
+        direccaoMunicipal: s.direccao_municipal,
+        anoLectivo: s.ano_lectivo,
+        subscription: s.subscription
+      })),
+      classes: (turmasRes.data || []).map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        level: c.level,
+        course: c.course,
+        shift: c.shift,
+        room: c.room,
+        capacity: c.capacity,
+        subjects: Array.isArray(c.subjects) ? c.subjects : [],
+        schoolId: c.school_id || ''
+      })),
+      students: (alunosRes.data || []).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        bi: s.bi || '',
+        birthDate: s.birth_date || '',
+        gender: s.gender || 'M',
+        guardianName: s.guardian_name || '',
+        guardianPhone: s.guardian_phone || '',
+        classId: s.class_id || '',
+        enrollmentStatus: s.enrollment_status || 'Matriculado',
+        enrollmentDate: s.enrollment_date || '',
+        schoolId: s.school_id || '',
+        residentialZone: s.residential_zone || ''
+      })),
+      teachers: (professoresRes.data || []).map((t: any) => ({
+        id: t.id,
+        name: t.name,
+        specialization: t.specialization,
+        phone: t.phone,
+        assignments: Array.isArray(t.assignments) ? t.assignments : [],
+        portalToken: t.portal_token,
+        schoolId: t.school_id || ''
+      })),
+      grades: (pautasRes.data || []).map((g: any) => ({
+        studentId: g.student_id,
+        subjectId: g.subject_id,
+        period: g.period,
+        type: g.type,
+        value: parseFloat(g.value),
+        schoolId: g.school_id || ''
+      })),
+      payments: (pagamentosRes.data || []).map((p: any) => ({
+        id: p.id,
+        studentId: p.student_id,
+        month: p.month,
+        service: p.service,
+        amount: parseFloat(p.amount),
+        fine: parseFloat(p.fine || 0),
+        discount: parseFloat(p.discount || 0),
+        date: p.date,
+        status: p.status,
+        receiptNumber: p.receipt_number,
+        schoolId: p.school_id || ''
+      })),
+      expenses: (despesasRes.data || []).map((e: any) => ({
+        id: e.id,
+        description: e.description,
+        category: e.category,
+        amount: parseFloat(e.amount),
+        date: e.date,
+        receiptNumber: e.receipt_number,
+        schoolId: e.school_id || ''
+      })),
+      users: (utilizadoresRes.data || []).map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        password: u.password,
+        role: u.role,
+        status: u.status,
+        lastLogin: u.last_login,
+        schoolId: u.school_id || '',
+        assignedClassIds: Array.isArray(u.assigned_class_ids) ? u.assigned_class_ids : [],
+        avatarUrl: u.avatar_url,
+        studentId: u.student_id
+      })),
+      announcements: (comunicadosRes.data || []).map((a: any) => {
+        let parsedAudience = a.target_audience;
+        let targetUserIds: string[] | undefined = undefined;
+        let targetRole: string | undefined = undefined;
+        if (a.target_audience && typeof a.target_audience === 'string' && a.target_audience.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(a.target_audience);
+            parsedAudience = parsed.audience || 'school_users';
+            targetUserIds = Array.isArray(parsed.userIds) ? parsed.userIds : undefined;
+            targetRole = parsed.role || undefined;
+          } catch (e) {}
+        }
+        return {
+          id: a.id,
+          title: a.title,
+          content: a.content,
+          date: a.date,
+          senderId: a.sender_id,
+          senderName: a.sender_name,
+          senderRole: a.sender_role,
+          targetAudience: parsedAudience,
+          targetUserIds,
+          targetRole,
+          schoolId: a.school_id || ''
+        };
+      }),
+      auditLogs: (auditRes.data || []).map((al: any) => ({
+        id: al.id,
+        userId: al.user_id,
+        userName: al.user_name,
+        userEmail: al.user_email,
+        userRole: al.user_role,
+        action: al.action,
+        timestamp: al.timestamp,
+        details: al.details
+      }))
+    };
+  } catch (err) {
+    console.error('Erro ao ler dados diretamente do Supabase:', err);
     return null;
   }
 }
 
-// Push a single sync queue item to the backend
+// Push a single sync queue item with backend API or direct Supabase client fallback
 export async function pushItemToSupabase(action: { type: string; data: any }) {
   try {
     const res = await fetch('/api/sync-data', {
@@ -381,14 +578,294 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action })
     });
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || 'Falha na sincronização com o backend.');
-    }
-    return true;
+    if (res.ok) return true;
   } catch (err) {
-    console.error('Erro ao sincronizar item via backend:', err);
-    throw err;
+    console.warn('Backend indisponível para sincronização. A tentar gravação directa no Supabase...', err);
+  }
+
+  // Direct Supabase Client fallback execution
+  const { type, data } = action;
+  switch (type) {
+    case 'CADASTRAR_ALUNO':
+    case 'ACTUALIZAR_ALUNO': {
+      const payload = mapStudentToSupabase(data);
+      const { error } = await supabase.from('alunos').upsert(payload);
+      if (error) {
+        if (error.message.includes('class_id') || error.message.includes('school_id')) {
+          payload.class_id = null;
+          payload.school_id = null;
+          const { error: err2 } = await supabase.from('alunos').upsert(payload);
+          if (err2) throw err2;
+        } else {
+          throw error;
+        }
+      }
+      return true;
+    }
+    case 'IMPORTAR_ALUNOS': {
+      if (Array.isArray(data)) {
+        const payloads = data.map(mapStudentToSupabase);
+        const { error } = await supabase.from('alunos').upsert(payloads);
+        if (error) {
+          const safePayloads = payloads.map(p => ({ ...p, class_id: null, school_id: null }));
+          const { error: err2 } = await supabase.from('alunos').upsert(safePayloads);
+          if (err2) throw err2;
+        }
+      }
+      return true;
+    }
+    case 'ELIMINAR_ALUNO': {
+      const { error } = await supabase.from('alunos').delete().eq('id', data.id);
+      if (error) throw error;
+      return true;
+    }
+    case 'CRIAR_TURMA':
+    case 'ACTUALIZAR_TURMA': {
+      const payload = {
+        id: data.id,
+        name: data.name,
+        level: data.level,
+        course: data.course || null,
+        shift: data.shift,
+        room: data.room,
+        capacity: data.capacity,
+        subjects: data.subjects || [],
+        school_id: cleanSchoolId(data.schoolId)
+      };
+      const { error } = await supabase.from('turmas').upsert(payload);
+      if (error && error.message.includes('school_id')) {
+        payload.school_id = null;
+        const { error: err2 } = await supabase.from('turmas').upsert(payload);
+        if (err2) throw err2;
+      } else if (error) {
+        throw error;
+      }
+      return true;
+    }
+    case 'ELIMINAR_TURMA': {
+      const { error } = await supabase.from('turmas').delete().eq('id', data.id);
+      if (error) throw error;
+      return true;
+    }
+    case 'CADASTRAR_PROFESSOR':
+    case 'ACTUALIZAR_PROFESSOR': {
+      const payload = {
+        id: data.id,
+        name: data.name,
+        specialization: data.specialization || null,
+        phone: data.phone || null,
+        assignments: data.assignments || [],
+        portal_token: data.portalToken || null,
+        school_id: cleanSchoolId(data.schoolId)
+      };
+      const { error } = await supabase.from('professores').upsert(payload);
+      if (error && error.message.includes('school_id')) {
+        payload.school_id = null;
+        const { error: err2 } = await supabase.from('professores').upsert(payload);
+        if (err2) throw err2;
+      } else if (error) {
+        throw error;
+      }
+      return true;
+    }
+    case 'ACTUALIZAR_PROFESSORES': {
+      if (Array.isArray(data)) {
+        const payloads = data.map(t => ({
+          id: t.id,
+          name: t.name,
+          specialization: t.specialization || null,
+          phone: t.phone || null,
+          assignments: t.assignments || [],
+          portal_token: t.portalToken || null,
+          school_id: cleanSchoolId(t.schoolId)
+        }));
+        const { error } = await supabase.from('professores').upsert(payloads);
+        if (error) {
+          const safePayloads = payloads.map(p => ({ ...p, school_id: null }));
+          const { error: err2 } = await supabase.from('professores').upsert(safePayloads);
+          if (err2) throw err2;
+        }
+      }
+      return true;
+    }
+    case 'ELIMINAR_PROFESSOR': {
+      const { error } = await supabase.from('professores').delete().eq('id', data.id);
+      if (error) throw error;
+      return true;
+    }
+    case 'ACTUALIZAR_NOTAS': {
+      if (Array.isArray(data)) {
+        const payloads = data.map(g => ({
+          student_id: g.studentId,
+          subject_id: g.subjectId,
+          period: g.period,
+          type: g.type,
+          value: g.value,
+          school_id: cleanSchoolId(g.schoolId)
+        }));
+        const { error } = await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
+        if (error) {
+          const safePayloads = payloads.map(p => ({ ...p, school_id: null }));
+          const { error: err2 } = await supabase.from('pautas').upsert(safePayloads, { onConflict: 'student_id,subject_id,period,type' });
+          if (err2) throw err2;
+        }
+      }
+      return true;
+    }
+    case 'ELIMINAR_NOTA': {
+      if (data.studentId && data.subjectId && data.period && data.type) {
+        const { error } = await supabase.from('pautas')
+          .delete()
+          .eq('student_id', data.studentId)
+          .eq('subject_id', data.subjectId)
+          .eq('period', data.period)
+          .eq('type', data.type);
+        if (error) throw error;
+      }
+      return true;
+    }
+    case 'REGISTAR_PAGAMENTO': {
+      const payload = {
+        id: data.id,
+        student_id: data.studentId,
+        month: data.month || null,
+        service: data.service,
+        amount: data.amount,
+        fine: data.fine || 0,
+        discount: data.discount || 0,
+        date: data.date,
+        status: data.status,
+        receipt_number: data.receiptNumber,
+        school_id: cleanSchoolId(data.schoolId)
+      };
+      const { error } = await supabase.from('pagamentos').upsert(payload);
+      if (error && error.message.includes('school_id')) {
+        payload.school_id = null;
+        const { error: err2 } = await supabase.from('pagamentos').upsert(payload);
+        if (err2) throw err2;
+      } else if (error) {
+        throw error;
+      }
+      return true;
+    }
+    case 'ELIMINAR_PAGAMENTO': {
+      const { error } = await supabase.from('pagamentos').delete().eq('id', data.id);
+      if (error) throw error;
+      return true;
+    }
+    case 'REGISTAR_DESPESA': {
+      const payload = {
+        id: data.id,
+        description: data.description,
+        category: data.category,
+        amount: data.amount,
+        date: data.date,
+        receipt_number: data.receiptNumber || null,
+        school_id: cleanSchoolId(data.schoolId)
+      };
+      const { error } = await supabase.from('despesas').upsert(payload);
+      if (error && error.message.includes('school_id')) {
+        payload.school_id = null;
+        const { error: err2 } = await supabase.from('despesas').upsert(payload);
+        if (err2) throw err2;
+      } else if (error) {
+        throw error;
+      }
+      return true;
+    }
+    case 'ELIMINAR_DESPESA': {
+      const { error } = await supabase.from('despesas').delete().eq('id', data.id);
+      if (error) throw error;
+      return true;
+    }
+    case 'CRIAR_UTILIZADOR':
+    case 'ACTUALIZAR_UTILIZADOR': {
+      const payload = {
+        id: data.id,
+        name: data.name,
+        email: data.email,
+        password: data.password || '123456',
+        role: data.role,
+        status: data.status || 'Activo',
+        last_login: data.lastLogin || null,
+        school_id: cleanSchoolId(data.schoolId),
+        assigned_class_ids: data.assignedClassIds || [],
+        avatar_url: data.avatarUrl || null,
+        student_id: data.studentId || null
+      };
+      const { error } = await supabase.from('utilizadores').upsert(payload);
+      if (error && error.message.includes('school_id')) {
+        payload.school_id = null;
+        const { error: err2 } = await supabase.from('utilizadores').upsert(payload);
+        if (err2) throw err2;
+      } else if (error) {
+        throw error;
+      }
+      return true;
+    }
+    case 'ELIMINAR_UTILIZADOR': {
+      const { error } = await supabase.from('utilizadores').delete().eq('id', data.id);
+      if (error) throw error;
+      return true;
+    }
+    case 'CRIAR_COMUNICADO': {
+      const targetAudiencePayload = (data.targetUserIds || data.targetRole) ? JSON.stringify({
+        audience: data.targetAudience || 'school_users',
+        userIds: data.targetUserIds || [],
+        role: data.targetRole || null
+      }) : (data.targetAudience || 'school_users');
+
+      const payload = {
+        id: data.id,
+        title: data.title,
+        content: data.content,
+        date: data.date,
+        sender_id: data.senderId,
+        sender_name: data.senderName,
+        sender_role: data.senderRole,
+        target_audience: targetAudiencePayload,
+        school_id: cleanSchoolId(data.schoolId)
+      };
+      const { error } = await supabase.from('comunicados').upsert(payload);
+      if (error && error.message.includes('school_id')) {
+        payload.school_id = null;
+        const { error: err2 } = await supabase.from('comunicados').upsert(payload);
+        if (err2) throw err2;
+      } else if (error) {
+        throw error;
+      }
+      return true;
+    }
+    case 'ELIMINAR_COMUNICADO': {
+      const { error } = await supabase.from('comunicados').delete().eq('id', data.id);
+      if (error) throw error;
+      return true;
+    }
+    case 'ACTUALIZAR_ESCOLA': {
+      const payload = {
+        id: data.id,
+        name: data.name,
+        nif: data.nif || null,
+        address: data.address || null,
+        phone: data.phone || null,
+        email: data.email || null,
+        director_name: data.directorName || null,
+        subdirector_name: data.subdirectorName || null,
+        status: data.status || 'Activo',
+        republica: data.republica || null,
+        governo_provincia: data.governoProvincia || null,
+        administracao_municipal: data.administracaoMunicipal || null,
+        direccao_municipal: data.direccaoMunicipal || null,
+        ano_lectivo: data.anoLectivo || null,
+        subscription: data.subscription || null
+      };
+      const { error } = await supabase.from('escolas').upsert(payload);
+      if (error) throw error;
+      return true;
+    }
+    default:
+      console.warn(`[Sync] Tipo de acção não reconhecida: ${type}`);
+      return true;
   }
 }
 
