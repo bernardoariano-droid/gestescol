@@ -2124,13 +2124,6 @@ export default function App() {
 
         <div className="p-4 border-t border-blue-800 space-y-1">
           <button 
-            onClick={() => window.open('https://wa.me/244932590171', '_blank')}
-            className="w-full flex items-center gap-3 p-3 text-emerald-400 hover:bg-emerald-500/10 rounded-xl transition-all font-semibold"
-          >
-            <Phone size={20} />
-            {(sidebarOpen || isMobile) && <span>Suporte WhatsApp</span>}
-          </button>
-          <button 
             onClick={handleLogout}
             className="w-full flex items-center gap-3 p-3 text-red-400 hover:bg-red-500/10 rounded-xl transition-all font-semibold"
           >
