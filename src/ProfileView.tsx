@@ -116,9 +116,9 @@ export function ProfileView({ currentUser, users, setUsers, setCurrentUser, show
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            {themesList.map((t) => (
+            {themesList.map((t, idx) => (
               <button
-                key={t.id}
+                key={`${t.id}-${idx}`}
                 type="button"
                 onClick={() => handleThemeChange(t.id)}
                 className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center gap-3 active:scale-95 cursor-pointer ${

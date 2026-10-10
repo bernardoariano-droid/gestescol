@@ -43,8 +43,7 @@ export const authService: AuthService = {
   },
   filterBySchool: <T extends { schoolId?: string }>(items: T[]): T[] => {
     const user = authService.getCurrentUser();
-    if (!user) return [] as T[];
-    if (user.role === 'Super-Administrador') return items;
+    if (!user || user.role === 'Super-Administrador') return items;
     return items.filter(item => !item.schoolId || user.schoolId === item.schoolId) as T[];
   },
   canManageSchools: () => {

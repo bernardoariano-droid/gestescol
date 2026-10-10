@@ -27,8 +27,8 @@ export function CalendarView() {
         </div>
         
         <div className="grid grid-cols-7 gap-4 mb-4">
-          {days.map(d => (
-            <div key={d} className="text-center font-bold text-neutral-400 text-sm uppercase tracking-wider">{d}</div>
+          {days.map((d, index) => (
+            <div key={`day-${d}-${index}`} className="text-center font-bold text-neutral-400 text-sm uppercase tracking-wider">{d}</div>
           ))}
         </div>
         

@@ -22,7 +22,7 @@ export function ExamsView({ classes, students }: { classes: Class[], students: S
             className="w-full bg-neutral-50 border border-neutral-200 text-neutral-700 text-sm rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
           >
              <option value="">Selecione a Turma</option>
-             {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+             {classes.map((c, i) => <option key={`${c.id}-${i}`} value={c.id}>{c.name}</option>)}
           </select>
         </div>
         

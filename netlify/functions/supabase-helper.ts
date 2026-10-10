@@ -1,10 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Supabase configuration details with robust environment variable fallbacks
-export const SUPABASE_URL = 
+// Sanitize Supabase URL to strip any /rest/v1 or trailing slashes
+export function sanitizeSupabaseUrl(url?: string | null): string {
+  if (!url || typeof url !== 'string') return 'https://fhrgnhhuolordpilluak.supabase.co';
+  let clean = url.trim().replace(/\/+$/, '');
+  clean = clean.replace(/\/rest\/v1\/?$/i, '').replace(/\/+$/, '');
+  return clean || 'https://fhrgnhhuolordpilluak.supabase.co';
+}
+
+const rawSupabaseUrl = 
   process.env.VITE_SUPABASE_URL || 
   process.env.SUPABASE_URL || 
   'https://fhrgnhhuolordpilluak.supabase.co';
+
+export const SUPABASE_URL = sanitizeSupabaseUrl(rawSupabaseUrl);
 
 export const SUPABASE_ANON_KEY = 
   process.env.VITE_SUPABASE_ANON_KEY || 
@@ -20,10 +30,26 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   }
 });
 
-// Helper: Clean school ID to avoid invalid foreign key constraints (e.g. 's1')
+// Helper: Clean school ID to avoid invalid foreign key constraints
 function cleanSchoolId(id?: string | null): string | null {
-  if (!id || typeof id !== 'string' || id.trim() === '' || id.trim() === 's1') return null;
+  if (!id || typeof id !== 'string' || id.trim() === '') return null;
   return id.trim();
+}
+
+async function ensureSchoolExists(schoolId?: string | null) {
+  const cleanId = cleanSchoolId(schoolId) || 's1';
+  try {
+    const { data: existing } = await supabase.from('escolas').select('id').eq('id', cleanId).maybeSingle();
+    if (!existing) {
+      await supabase.from('escolas').upsert({
+        id: cleanId,
+        name: cleanId === 's1' ? 'Escola Principal' : 'Escola ' + cleanId,
+        status: 'Activo'
+      });
+    }
+  } catch (err) {
+    console.warn('Aviso ao assegurar escola no Supabase:', err);
+  }
 }
 
 // Helper: Test Supabase connection
@@ -72,7 +98,7 @@ function mapStudentFromSupabase(s: any) {
     classId: s.class_id || '',
     enrollmentStatus: s.enrollment_status || 'Matriculado',
     enrollmentDate: s.enrollment_date || '',
-    schoolId: s.school_id || '',
+    schoolId: s.school_id || 's1',
     residentialZone: s.residential_zone || ''
   };
 }
@@ -136,7 +162,7 @@ export async function pullFromSupabase() {
         room: c.room,
         capacity: c.capacity,
         subjects: Array.isArray(c.subjects) ? c.subjects : [],
-        schoolId: c.school_id || ''
+        schoolId: c.school_id || 's1'
       })),
       students: (alunosRes.data || []).map(mapStudentFromSupabase),
       teachers: (professoresRes.data || []).map(t => ({
@@ -146,7 +172,7 @@ export async function pullFromSupabase() {
         phone: t.phone,
         assignments: Array.isArray(t.assignments) ? t.assignments : [],
         portalToken: t.portal_token,
-        schoolId: t.school_id || ''
+        schoolId: t.school_id || 's1'
       })),
       grades: (pautasRes.data || []).map(g => ({
         studentId: g.student_id,
@@ -154,7 +180,7 @@ export async function pullFromSupabase() {
         period: g.period,
         type: g.type,
         value: parseFloat(g.value),
-        schoolId: g.school_id || ''
+        schoolId: g.school_id || 's1'
       })),
       payments: (pagamentosRes.data || []).map(p => ({
         id: p.id,
@@ -167,7 +193,7 @@ export async function pullFromSupabase() {
         date: p.date,
         status: p.status,
         receiptNumber: p.receipt_number,
-        schoolId: p.school_id || ''
+        schoolId: p.school_id || 's1'
       })),
       expenses: (despesasRes.data || []).map(e => ({
         id: e.id,
@@ -176,7 +202,7 @@ export async function pullFromSupabase() {
         amount: parseFloat(e.amount),
         date: e.date,
         receiptNumber: e.receipt_number,
-        schoolId: e.school_id || ''
+        schoolId: e.school_id || 's1'
       })),
       users: (utilizadoresRes.data || []).map(u => ({
         id: u.id,
@@ -277,6 +303,8 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
       }
       case 'CRIAR_TURMA':
       case 'ACTUALIZAR_TURMA': {
+        await ensureSchoolExists(data.schoolId || 's1');
+        const targetSchoolId = cleanSchoolId(data.schoolId) || 's1';
         const payload = {
           id: data.id,
           name: data.name,
@@ -286,15 +314,14 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
           room: data.room,
           capacity: data.capacity,
           subjects: data.subjects || [],
-          school_id: cleanSchoolId(data.schoolId)
+          school_id: targetSchoolId
         };
         const { error } = await supabase.from('turmas').upsert(payload);
-        if (error && error.message.includes('school_id')) {
-          payload.school_id = null;
+        if (error) {
+          await ensureSchoolExists('s1');
+          payload.school_id = 's1';
           const { error: err2 } = await supabase.from('turmas').upsert(payload);
           if (err2) throw err2;
-        } else if (error) {
-          throw error;
         }
         break;
       }

@@ -23,10 +23,20 @@ const getEnvVar = (key: string): string => {
   return '';
 };
 
-export const SUPABASE_URL = 
+// Sanitize Supabase URL to strip any /rest/v1 or trailing slashes
+export function sanitizeSupabaseUrl(url?: string | null): string {
+  if (!url || typeof url !== 'string') return 'https://fhrgnhhuolordpilluak.supabase.co';
+  let clean = url.trim().replace(/\/+$/, '');
+  clean = clean.replace(/\/rest\/v1\/?$/i, '').replace(/\/+$/, '');
+  return clean || 'https://fhrgnhhuolordpilluak.supabase.co';
+}
+
+const rawSupabaseUrl = 
   getEnvVar('VITE_SUPABASE_URL') || 
   getEnvVar('SUPABASE_URL') || 
   'https://fhrgnhhuolordpilluak.supabase.co';
+
+export const SUPABASE_URL = sanitizeSupabaseUrl(rawSupabaseUrl);
 
 export const SUPABASE_ANON_KEY = 
   getEnvVar('VITE_SUPABASE_ANON_KEY') || 
@@ -75,7 +85,7 @@ CREATE TABLE IF NOT EXISTS turmas (
   room TEXT,
   capacity INTEGER,
   subjects JSONB,
-  school_id TEXT REFERENCES escolas(id) ON DELETE CASCADE,
+  school_id TEXT NOT NULL REFERENCES escolas(id) ON DELETE CASCADE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
 );
 
@@ -116,6 +126,7 @@ CREATE TABLE IF NOT EXISTS pautas (
   period TEXT,
   type TEXT,
   value NUMERIC,
+  nota_exame NUMERIC,
   school_id TEXT REFERENCES escolas(id) ON DELETE CASCADE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW()),
   UNIQUE(student_id, subject_id, period, type)
@@ -350,8 +361,24 @@ CREATE POLICY "Inserção/Actualização de notas por Professores e Admins"
 
 // Helper: Clean school ID to avoid invalid foreign key constraints
 function cleanSchoolId(id?: string | null): string | null {
-  if (!id || typeof id !== 'string' || id.trim() === '' || id.trim() === 's1') return null;
+  if (!id || typeof id !== 'string' || id.trim() === '') return null;
   return id.trim();
+}
+
+async function ensureSchoolExists(schoolId?: string | null) {
+  const cleanId = cleanSchoolId(schoolId) || 's1';
+  try {
+    const { data: existing } = await supabase.from('escolas').select('id').eq('id', cleanId).maybeSingle();
+    if (!existing) {
+      await supabase.from('escolas').upsert({
+        id: cleanId,
+        name: cleanId === 's1' ? 'Escola Principal' : 'Escola ' + cleanId,
+        status: 'Activo'
+      });
+    }
+  } catch (err) {
+    console.warn('Aviso ao assegurar escola no Supabase:', err);
+  }
 }
 
 function mapStudentToSupabase(s: any) {
@@ -459,7 +486,7 @@ export async function pullFromSupabase() {
         room: c.room,
         capacity: c.capacity,
         subjects: Array.isArray(c.subjects) ? c.subjects : [],
-        schoolId: c.school_id || ''
+        schoolId: c.school_id || 's1'
       })),
       students: (alunosRes.data || []).map((s: any) => ({
         id: s.id,
@@ -472,7 +499,7 @@ export async function pullFromSupabase() {
         classId: s.class_id || '',
         enrollmentStatus: s.enrollment_status || 'Matriculado',
         enrollmentDate: s.enrollment_date || '',
-        schoolId: s.school_id || '',
+        schoolId: s.school_id || 's1',
         residentialZone: s.residential_zone || ''
       })),
       teachers: (professoresRes.data || []).map((t: any) => ({
@@ -482,7 +509,7 @@ export async function pullFromSupabase() {
         phone: t.phone,
         assignments: Array.isArray(t.assignments) ? t.assignments : [],
         portalToken: t.portal_token,
-        schoolId: t.school_id || ''
+        schoolId: t.school_id || 's1'
       })),
       grades: (pautasRes.data || []).map((g: any) => ({
         studentId: g.student_id,
@@ -490,7 +517,8 @@ export async function pullFromSupabase() {
         period: g.period,
         type: g.type,
         value: parseFloat(g.value),
-        schoolId: g.school_id || ''
+        notaExame: g.nota_exame ? parseFloat(g.nota_exame) : undefined,
+        schoolId: g.school_id || 's1'
       })),
       payments: (pagamentosRes.data || []).map((p: any) => ({
         id: p.id,
@@ -503,7 +531,7 @@ export async function pullFromSupabase() {
         date: p.date,
         status: p.status,
         receiptNumber: p.receipt_number,
-        schoolId: p.school_id || ''
+        schoolId: p.school_id || 's1'
       })),
       expenses: (despesasRes.data || []).map((e: any) => ({
         id: e.id,
@@ -512,7 +540,7 @@ export async function pullFromSupabase() {
         amount: parseFloat(e.amount),
         date: e.date,
         receiptNumber: e.receipt_number,
-        schoolId: e.school_id || ''
+        schoolId: e.school_id || 's1'
       })),
       users: (utilizadoresRes.data || []).map((u: any) => ({
         id: u.id,
@@ -522,7 +550,7 @@ export async function pullFromSupabase() {
         role: u.role,
         status: u.status,
         lastLogin: u.last_login,
-        schoolId: u.school_id || '',
+        schoolId: u.school_id || 's1',
         assignedClassIds: Array.isArray(u.assigned_class_ids) ? u.assigned_class_ids : [],
         avatarUrl: u.avatar_url,
         studentId: u.student_id
@@ -621,6 +649,8 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
     }
     case 'CRIAR_TURMA':
     case 'ACTUALIZAR_TURMA': {
+      await ensureSchoolExists(data.schoolId || 's1');
+      const targetSchoolId = cleanSchoolId(data.schoolId) || 's1';
       const payload = {
         id: data.id,
         name: data.name,
@@ -630,15 +660,15 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
         room: data.room,
         capacity: data.capacity,
         subjects: data.subjects || [],
-        school_id: cleanSchoolId(data.schoolId)
+        school_id: targetSchoolId
       };
       const { error } = await supabase.from('turmas').upsert(payload);
-      if (error && error.message.includes('school_id')) {
-        payload.school_id = null;
+      if (error) {
+        // Retry after ensuring school 's1' exists
+        await ensureSchoolExists('s1');
+        payload.school_id = 's1';
         const { error: err2 } = await supabase.from('turmas').upsert(payload);
         if (err2) throw err2;
-      } else if (error) {
-        throw error;
       }
       return true;
     }
@@ -701,6 +731,7 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
           period: g.period,
           type: g.type,
           value: g.value,
+          nota_exame: g.notaExame,
           school_id: cleanSchoolId(g.schoolId)
         }));
         const { error } = await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
@@ -753,7 +784,8 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
       if (error) throw error;
       return true;
     }
-    case 'REGISTAR_DESPESA': {
+    case 'REGISTAR_DESPESA':
+    case 'ACTUALIZAR_DESPESA': {
       const payload = {
         id: data.id,
         description: data.description,
@@ -779,6 +811,7 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
       return true;
     }
     case 'CRIAR_UTILIZADOR':
+    case 'CADASTRAR_UTILIZADOR':
     case 'ACTUALIZAR_UTILIZADOR': {
       const payload = {
         id: data.id,
@@ -841,6 +874,7 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
       if (error) throw error;
       return true;
     }
+    case 'CRIAR_ESCOLA':
     case 'ACTUALIZAR_ESCOLA': {
       const payload = {
         id: data.id,
@@ -860,6 +894,26 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
         subscription: data.subscription || null
       };
       const { error } = await supabase.from('escolas').upsert(payload);
+      if (error) throw error;
+      return true;
+    }
+    case 'ELIMINAR_ESCOLA': {
+      const { error } = await supabase.from('escolas').delete().eq('id', data.id);
+      if (error) throw error;
+      return true;
+    }
+    case 'REGISTAR_AUDIT_LOG': {
+      const payload = {
+        id: data.id,
+        user_id: data.userId,
+        user_name: data.userName,
+        user_email: data.userEmail,
+        user_role: data.userRole,
+        action: data.action,
+        timestamp: data.timestamp,
+        details: data.details || null
+      };
+      const { error } = await supabase.from('audit_logs').upsert(payload);
       if (error) throw error;
       return true;
     }

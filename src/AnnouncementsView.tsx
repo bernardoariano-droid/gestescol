@@ -525,10 +525,10 @@ export function AnnouncementsView({ announcements, setAnnouncements, currentUser
                               Destinatários Selecionados:
                             </div>
                             <div className="flex flex-wrap gap-1.5">
-                              {announcement.targetUserIds.map(uid => {
+                              {announcement.targetUserIds.map((uid, idx) => {
                                 const userObj = users.find(u => u.id === uid);
                                 return (
-                                  <span key={uid} className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-200 rounded-lg text-xs font-medium text-neutral-800 shadow-2xs">
+                                  <span key={`${uid}-${idx}`} className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-200 rounded-lg text-xs font-medium text-neutral-800 shadow-2xs">
                                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                     {userObj ? userObj.name : `Utilizador (${uid})`}
                                     {userObj && <span className="text-[10px] text-neutral-400">({userObj.role})</span>}

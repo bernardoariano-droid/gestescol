@@ -65,6 +65,7 @@ export type Grade = {
   period: '1º Trimestre' | '2º Trimestre' | '3º Trimestre' | 'Exame';
   type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3';
   value: number;
+  notaExame?: number;
   schoolId?: string;
 };
 

@@ -40,9 +40,11 @@
 @layer base {
   body {
     @apply font-sans antialiased;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
-
 
 @layer utilities {
   .hide-scrollbar {
@@ -51,6 +53,11 @@
   }
   .hide-scrollbar::-webkit-scrollbar {
     display: none;
+  }
+  .gpu-accelerated {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    perspective: 1000px;
   }
 }
 

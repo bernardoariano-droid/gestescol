@@ -23,9 +23,9 @@ export function ArchiveView() {
       </header>
       
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-         {files.map(f => (
+         {files.map((f, i) => (
            <div 
-             key={f.id} 
+             key={`${f.id}-${i}`} 
              className="bg-white p-6 rounded-3xl border border-neutral-200 shadow-sm flex flex-col items-center text-center hover:border-blue-300 transition-colors cursor-pointer group"
            >
              <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">

@@ -85,10 +85,10 @@ export function SchoolsView({
 
       {/* Schools Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredSchools.map(school => {
+        {filteredSchools.map((school, i) => {
           const admin = getSchoolAdmin(school.id);
           return (
-            <div key={school.id} className="bg-white p-6 rounded-[32px] border border-neutral-200 shadow-sm hover:shadow-md transition-all group flex flex-col justify-between">
+            <div key={`${school.id}-${i}`} className="bg-white p-6 rounded-[32px] border border-neutral-200 shadow-sm hover:shadow-md transition-all group flex flex-col justify-between">
               <div>
                 <div className="flex items-start justify-between mb-4">
                   <div className="w-12 h-12 bg-neutral-100 rounded-2xl flex items-center justify-center text-neutral-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">

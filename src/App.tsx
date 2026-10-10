@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
@@ -629,12 +629,57 @@ export const generateUnifiedClassPautasPDF = (
 };
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [currentUser, setCurrentUser] = useState<SystemUser | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => authService.isAuthenticated());
+  const [currentUser, setCurrentUser] = useState<SystemUser | null>(() => authService.getCurrentUser());
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [selectedListClassId, setSelectedListClassId] = useState<string>('');
   const [certInitData, setCertInitData] = useState<{ studentId?: string, tab?: 'list' | 'editor' | 'issue', bulkIds?: string[] }>({});
-  
+
+  // Core Data States
+  const [students, setStudents] = useState<Student[]>(() => {
+    const saved = localStorage.getItem('edugest_students');
+    return saved ? JSON.parse(saved) : INITIAL_STUDENTS;
+  });
+  const [classes, setClasses] = useState<Class[]>(() => {
+    const saved = localStorage.getItem('edugest_classes');
+    return saved ? JSON.parse(saved) : INITIAL_CLASSES;
+  });
+  const [teachers, setTeachers] = useState<Teacher[]>(() => {
+    const saved = localStorage.getItem('edugest_teachers');
+    return saved ? JSON.parse(saved) : INITIAL_TEACHERS;
+  });
+  const [payments, setPayments] = useState<Payment[]>(() => {
+    const saved = localStorage.getItem('edugest_payments');
+    return saved ? JSON.parse(saved) : INITIAL_PAYMENTS;
+  });
+  const [expenses, setExpenses] = useState<Expense[]>(() => {
+    const saved = localStorage.getItem('edugest_expenses');
+    return saved ? JSON.parse(saved) : INITIAL_EXPENSES;
+  });
+  const [grades, setGrades] = useState<Grade[]>(() => {
+    const saved = localStorage.getItem('edugest_grades');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [users, setUsers] = useState<SystemUser[]>(() => {
+    const saved = localStorage.getItem('edugest_users');
+    return saved ? JSON.parse(saved) : INITIAL_USERS;
+  });
+  const [templates, setTemplates] = useState<CertificateTemplate[]>(() => {
+    const saved = localStorage.getItem('edugest_templates');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [announcements, setAnnouncements] = useState<Announcement[]>(() => {
+    const saved = localStorage.getItem('edugest_announcements');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [schools, setSchools] = useState<School[]>(() => {
+    const saved = localStorage.getItem('edugest_schools');
+    return saved ? JSON.parse(saved) : INITIAL_SCHOOLS;
+  });
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string>(() => {
+    return localStorage.getItem('edugest_selected_school_id') || 's1';
+  });
+
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
     const saved = localStorage.getItem('edugest_audit_logs');
     return saved ? JSON.parse(saved) : [];
@@ -660,22 +705,6 @@ export default function App() {
     });
   };
 
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('edugest_theme') || 'light';
-    document.documentElement.className = savedTheme;
-    if (authService.isAuthenticated()) {
-      setIsAuthenticated(true);
-      const user = authService.getCurrentUser();
-      setCurrentUser(user);
-      if (user) {
-        // Debounce or only log system access once per session-load
-        logAuditEvent('Acesso ao Sistema', 'Sessão activa recuperada', user);
-        // Direct Sync with Backend on mount!
-        triggerSilentSupabasePull();
-      }
-    }
-  }, []);
-
   const handleLogout = () => {
     if (currentUser) {
       logAuditEvent('Logout', 'Encerrou sessão com sucesso', currentUser);
@@ -684,10 +713,6 @@ export default function App() {
     setIsAuthenticated(false);
     setCurrentUser(null);
   };
-
-  useEffect(() => {
-    setIsEditingHeader(false);
-  }, [activeView]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [navFilter, setNavFilter] = useState<string>('Todas');
@@ -767,16 +792,46 @@ export default function App() {
     try {
       const cloudData = await pullFromSupabase();
       if (cloudData) {
-        if (cloudData.schools && cloudData.schools.length > 0) setSchools(cloudData.schools);
-        if (cloudData.classes && cloudData.classes.length > 0) setClasses(cloudData.classes);
-        if (cloudData.students && cloudData.students.length > 0) setStudents(cloudData.students);
-        if (cloudData.teachers && cloudData.teachers.length > 0) setTeachers(cloudData.teachers);
-        if (cloudData.grades && cloudData.grades.length > 0) setGrades(cloudData.grades);
-        if (cloudData.payments && cloudData.payments.length > 0) setPayments(cloudData.payments);
-        if (cloudData.expenses && cloudData.expenses.length > 0) setExpenses(cloudData.expenses);
-        if (cloudData.users && cloudData.users.length > 0) setUsers(cloudData.users);
-        if (cloudData.announcements && cloudData.announcements.length > 0) setAnnouncements(cloudData.announcements);
-        if (cloudData.auditLogs && cloudData.auditLogs.length > 0) setAuditLogs(cloudData.auditLogs);
+        if (Array.isArray(cloudData.schools)) setSchools(cloudData.schools);
+        if (Array.isArray(cloudData.classes)) {
+          setClasses(prev => {
+            const cloudIds = new Set(cloudData.classes.map((c: Class) => c.id));
+            const localOnly = prev.filter(c => !cloudIds.has(c.id));
+            return [...cloudData.classes, ...localOnly];
+          });
+        }
+        if (Array.isArray(cloudData.students)) {
+          setStudents(prev => {
+            const cloudIds = new Set(cloudData.students.map((s: Student) => s.id));
+            const localOnly = prev.filter(s => !cloudIds.has(s.id));
+            return [...cloudData.students, ...localOnly];
+          });
+        }
+        if (Array.isArray(cloudData.teachers)) {
+          setTeachers(prev => {
+            const cloudIds = new Set(cloudData.teachers.map((t: Teacher) => t.id));
+            const localOnly = prev.filter(t => !cloudIds.has(t.id));
+            return [...cloudData.teachers, ...localOnly];
+          });
+        }
+        if (Array.isArray(cloudData.grades)) setGrades(cloudData.grades);
+        if (Array.isArray(cloudData.payments)) {
+          setPayments(prev => {
+            const cloudIds = new Set(cloudData.payments.map((p: Payment) => p.id));
+            const localOnly = prev.filter(p => !cloudIds.has(p.id));
+            return [...cloudData.payments, ...localOnly];
+          });
+        }
+        if (Array.isArray(cloudData.expenses)) {
+          setExpenses(prev => {
+            const cloudIds = new Set(cloudData.expenses.map((e: Expense) => e.id));
+            const localOnly = prev.filter(e => !cloudIds.has(e.id));
+            return [...cloudData.expenses, ...localOnly];
+          });
+        }
+        if (Array.isArray(cloudData.users)) setUsers(cloudData.users);
+        if (Array.isArray(cloudData.announcements)) setAnnouncements(cloudData.announcements);
+        if (Array.isArray(cloudData.auditLogs)) setAuditLogs(cloudData.auditLogs);
         
         console.log('Sincronização directa com o backend (Supabase) concluída com sucesso.');
       }
@@ -851,6 +906,41 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, [isSimulatedOffline, isSyncing, syncRetryCount]);
+
+  // Supabase Realtime Subscription: Instant live sync across all devices & users with debounced pull
+  useEffect(() => {
+    const actuallyOnline = isOnline && !isSimulatedOffline;
+    if (!actuallyOnline) return;
+
+    console.log('[Supabase Realtime] A iniciar subscrição em tempo real...');
+    let debounceTimer: any = null;
+
+    const channel = supabase
+      .channel('edugest-realtime-sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public' },
+        (payload) => {
+          console.log('[Supabase Realtime] Alteração em tempo real detectada na tabela:', payload.table);
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            triggerSilentSupabasePull().catch(err => {
+              console.warn('[Supabase Realtime] Erro ao actualizar dados:', err);
+            });
+          }, 350);
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[Supabase Realtime] Conectado e sincronizando em Tempo Real!');
+        }
+      });
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [isOnline, isSimulatedOffline]);
 
   // Automatic synchronization effect with queue integrity verification and exponential retry
   useEffect(() => {
@@ -1233,6 +1323,22 @@ export default function App() {
   };
 
   useEffect(() => {
+    const savedTheme = localStorage.getItem('edugest_theme') || 'light';
+    document.documentElement.className = savedTheme;
+    if (authService.isAuthenticated()) {
+      setIsAuthenticated(true);
+      const user = authService.getCurrentUser();
+      setCurrentUser(user);
+      if (user) {
+        // Debounce or only log system access once per session-load
+        logAuditEvent('Acesso ao Sistema', 'Sessão activa recuperada', user);
+        // Direct Sync with Backend on mount!
+        triggerSilentSupabasePull().catch(e => console.warn('Supabase sync warning:', e));
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 1024);
       if (window.innerWidth >= 1024) {
@@ -1246,50 +1352,6 @@ export default function App() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
   
-  // State for data
-  const [students, setStudents] = useState<Student[]>(() => {
-    const saved = localStorage.getItem('edugest_students');
-    return saved ? JSON.parse(saved) : INITIAL_STUDENTS;
-  });
-  const [classes, setClasses] = useState<Class[]>(() => {
-    const saved = localStorage.getItem('edugest_classes');
-    return saved ? JSON.parse(saved) : INITIAL_CLASSES;
-  });
-  const [teachers, setTeachers] = useState<Teacher[]>(() => {
-    const saved = localStorage.getItem('edugest_teachers');
-    return saved ? JSON.parse(saved) : INITIAL_TEACHERS;
-  });
-  const [payments, setPayments] = useState<Payment[]>(() => {
-    const saved = localStorage.getItem('edugest_payments');
-    return saved ? JSON.parse(saved) : INITIAL_PAYMENTS;
-  });
-  const [expenses, setExpenses] = useState<Expense[]>(() => {
-    const saved = localStorage.getItem('edugest_expenses');
-    return saved ? JSON.parse(saved) : INITIAL_EXPENSES;
-  });
-  const [grades, setGrades] = useState<Grade[]>(() => {
-    const saved = localStorage.getItem('edugest_grades');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [users, setUsers] = useState<SystemUser[]>(() => {
-    const saved = localStorage.getItem('edugest_users');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
-  });
-  const [templates, setTemplates] = useState<CertificateTemplate[]>(() => {
-    const saved = localStorage.getItem('edugest_templates');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [announcements, setAnnouncements] = useState<Announcement[]>(() => {
-    const saved = localStorage.getItem('edugest_announcements');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [schools, setSchools] = useState<School[]>(() => {
-    const saved = localStorage.getItem('edugest_schools');
-    return saved ? JSON.parse(saved) : INITIAL_SCHOOLS;
-  });
-  const [selectedSchoolId, setSelectedSchoolId] = useState<string>(() => {
-    return localStorage.getItem('edugest_selected_school_id') || 's1';
-  });
 
   const [viewConfigs, setViewConfigs] = useState<Record<View, { title: string, subtitle: string }>>(() => {
     const defaultConfigs = {
@@ -1331,7 +1393,11 @@ export default function App() {
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [tempHeader, setTempHeader] = useState({ title: '', subtitle: '' });
 
-  const getGrade = (studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' = 'MAC') => {
+  useEffect(() => {
+    setIsEditingHeader(false);
+  }, [activeView]);
+
+  const getGrade = useCallback((studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' = 'MAC') => {
     const existing = grades.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === type);
     if (existing) return existing.value;
 
@@ -1348,7 +1414,7 @@ export default function App() {
     }
 
     return 0;
-  };
+  }, [grades]);
 
   const [schoolSettings, setSchoolSettings] = useState<SchoolSettings>(() => {
     const saved = localStorage.getItem('edugest_school_settings');
@@ -1373,7 +1439,7 @@ export default function App() {
     ? (selectedSchoolId || 's1')
     : currentUser?.schoolId;
 
-  const currentSchool = schools.find(s => s.id === currentSchoolId);
+  const currentSchool = useMemo(() => schools.find(s => s.id === currentSchoolId), [schools, currentSchoolId]);
   
   const hasActiveSubscription = currentUser?.role === 'Super-Administrador' || (
     !currentSchool?.subscription || currentSchool.subscription.status === 'Activa'
@@ -1395,22 +1461,47 @@ export default function App() {
         logoBase64: currentSchool.logoBase64 || prev.logoBase64
       }));
     }
-  }, [currentSchoolId, schools]);
+  }, [currentSchool]);
 
-  const filteredStudents = authService.filterBySchool<Student>(students).filter(s => !currentSchoolId || s.schoolId === currentSchoolId);
-  const filteredClasses = authService.filterBySchool<Class>(classes).filter(c => 
-    (!currentSchoolId || c.schoolId === currentSchoolId) &&
-    (currentUser?.role !== 'Professor' || currentUser.assignedClassIds?.includes(c.id))
+  const isSingleSchool = schools.length <= 1;
+  const filteredStudents = useMemo(() => 
+    students.filter(s => isSingleSchool || !currentSchoolId || !s.schoolId || s.schoolId === currentSchoolId),
+    [students, currentSchoolId, isSingleSchool]
   );
-  const filteredTeachers = authService.filterBySchool<Teacher>(teachers).filter(t => !currentSchoolId || t.schoolId === currentSchoolId);
-  const filteredPayments = authService.filterBySchool<Payment>(payments).filter(p => !currentSchoolId || p.schoolId === currentSchoolId);
-  const filteredExpenses = authService.filterBySchool<Expense>(expenses).filter(e => !currentSchoolId || e.schoolId === currentSchoolId);
-  const filteredGrades = authService.filterBySchool<Grade>(grades).filter(g => !currentSchoolId || g.schoolId === currentSchoolId);
-  const filteredTemplates = authService.filterBySchool<CertificateTemplate>(templates).filter(t => !currentSchoolId || t.schoolId === currentSchoolId);
-  const filteredUsers = authService.filterBySchool<SystemUser>(users).filter(u => 
-    currentUser?.role === 'Super-Administrador'
-      ? (!currentSchoolId || u.schoolId === currentSchoolId || u.role === 'Super-Administrador')
-      : (u.schoolId === currentUser?.schoolId)
+  const filteredClasses = useMemo(() => 
+    classes.filter(c => 
+      (isSingleSchool || !currentSchoolId || !c.schoolId || c.schoolId === currentSchoolId) &&
+      (currentUser?.role !== 'Professor' || currentUser.assignedClassIds?.includes(c.id))
+    ),
+    [classes, currentSchoolId, isSingleSchool, currentUser]
+  );
+  const filteredTeachers = useMemo(() => 
+    teachers.filter(t => isSingleSchool || !currentSchoolId || !t.schoolId || t.schoolId === currentSchoolId),
+    [teachers, currentSchoolId, isSingleSchool]
+  );
+  const filteredPayments = useMemo(() => 
+    payments.filter(p => isSingleSchool || !currentSchoolId || !p.schoolId || p.schoolId === currentSchoolId),
+    [payments, currentSchoolId, isSingleSchool]
+  );
+  const filteredExpenses = useMemo(() => 
+    expenses.filter(e => isSingleSchool || !currentSchoolId || !e.schoolId || e.schoolId === currentSchoolId),
+    [expenses, currentSchoolId, isSingleSchool]
+  );
+  const filteredGrades = useMemo(() => 
+    grades.filter(g => isSingleSchool || !currentSchoolId || !g.schoolId || g.schoolId === currentSchoolId),
+    [grades, currentSchoolId, isSingleSchool]
+  );
+  const filteredTemplates = useMemo(() => 
+    templates.filter(t => isSingleSchool || !currentSchoolId || !t.schoolId || t.schoolId === currentSchoolId),
+    [templates, currentSchoolId, isSingleSchool]
+  );
+  const filteredUsers = useMemo(() => 
+    users.filter(u => 
+      currentUser?.role === 'Super-Administrador'
+        ? (!currentSchoolId || u.schoolId === currentSchoolId || u.role === 'Super-Administrador')
+        : (u.schoolId === currentUser?.schoolId)
+    ),
+    [users, currentSchoolId, currentUser]
   );
 
   async function exportClassStudentListPDF(cls: Class, paperSize: 'A4' | 'A3' | 'A5' = 'A4') {
@@ -2537,15 +2628,17 @@ export default function App() {
               {activeView === 'classes' && (
                 <ClassesView 
                   classes={filteredClasses} 
-                  onAddClass={(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') && hasActiveSubscription ? (c) => {
-                    setClasses([...classes, { ...c, schoolId: currentSchoolId || '' }]);
+                  onAddClass={hasActiveSubscription && (currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador' || currentUser?.role === 'Secretário') ? (c) => {
+                    const newClass = { ...c, schoolId: c.schoolId || currentSchoolId || 's1' };
+                    setClasses(prev => [...prev.filter(item => item.id !== newClass.id), newClass]);
                     showToast('Turma criada com sucesso');
-                    queueSyncAction('CRIAR_TURMA', `Criação da turma "${c.name}"`, c);
+                    queueSyncAction('CRIAR_TURMA', `Criação da turma "${c.name}"`, newClass);
                   } : undefined}
                   onUpdateClass={hasActiveSubscription ? (c) => {
-                    setClasses(classes.map(item => item.id === c.id ? { ...c, schoolId: c.schoolId || currentSchoolId || '' } : item));
+                    const updatedClass = { ...c, schoolId: c.schoolId || currentSchoolId || 's1' };
+                    setClasses(prev => prev.map(item => item.id === c.id ? updatedClass : item));
                     showToast('Dados da turma actualizados');
-                    queueSyncAction('ACTUALIZAR_TURMA', `Dados da turma "${c.name}" actualizados`, c);
+                    queueSyncAction('ACTUALIZAR_TURMA', `Dados da turma "${c.name}" actualizados`, updatedClass);
                   } : undefined}
                   onDeleteClass={hasActiveSubscription ? onDeleteClass : undefined}
                   students={filteredStudents}
@@ -5872,8 +5965,8 @@ function TeacherAssignmentModal({ teacher, classes, onClose, onUpdateTeachers, t
                 onChange={(e) => setSelectedClassId(e.target.value)}
                 className="w-full px-4 py-3 bg-white border border-neutral-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
               >
-                {classes.map(c => (
-                  <option key={c.id} value={c.id}>{c.name} ({c.shift})</option>
+                {classes.map((c, i) => (
+                  <option key={`${c.id}-${i}`} value={c.id}>{c.name} ({c.shift})</option>
                 ))}
               </select>
             </div>
@@ -5884,8 +5977,8 @@ function TeacherAssignmentModal({ teacher, classes, onClose, onUpdateTeachers, t
                 onChange={(e) => setSelectedSubject(e.target.value)}
                 className="w-full px-4 py-3 bg-white border border-neutral-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
               >
-                {subjects.map(s => (
-                  <option key={s} value={s}>{s}</option>
+                {subjects.map((s, i) => (
+                  <option key={`${s}-${i}`} value={s}>{s}</option>
                 ))}
               </select>
             </div>
@@ -6117,7 +6210,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
       let updated = prev.map(g => (g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === type) ? { ...g, value: clampedValue } : g);
       const existing = prev.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === type);
       if (!existing) {
-        updated.push({ studentId, subjectId, period, type, value: clampedValue });
+        updated.push({ studentId, subjectId, period: period as any, type, value: clampedValue });
       }
 
       if (['AC1', 'AC2', 'AC3'].includes(type)) {
@@ -6134,7 +6227,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
         if (macExist) {
           updated = updated.map(g => (g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === 'MAC') ? { ...g, value: newMac } : g);
         } else {
-          updated.push({ studentId, subjectId, period, type: 'MAC', value: newMac });
+          updated.push({ studentId, subjectId, period: period as any, type: 'MAC', value: newMac });
         }
       }
 
@@ -6675,8 +6768,8 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
                 <thead>
                   <tr className="bg-neutral-50/50 border-b border-neutral-100">
                     <th rowSpan={activeTab === 'Anual' ? 1 : 2} className="px-8 py-6 text-[10px] font-black text-neutral-400 uppercase tracking-widest sticky left-0 bg-neutral-50/50 z-20 backdrop-blur-sm">Aluno</th>
-                    {subjects.map(subject => (
-                      <th key={subject} colSpan={activeTab === 'Anual' ? 1 : 3} className="px-6 py-4 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-l border-neutral-100">{subject}</th>
+                    {subjects.map((subject, i) => (
+                      <th key={`${subject}-${i}`} colSpan={activeTab === 'Anual' ? 1 : 3} className="px-6 py-4 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-l border-neutral-100">{subject}</th>
                     ))}
                     {activeTab === 'Anual' && (
                       <>
@@ -6690,8 +6783,8 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
                   </tr>
                   {activeTab !== 'Anual' && (
                     <tr className="bg-neutral-50/50 border-b border-neutral-100">
-                      {subjects.map(subject => (
-                        <React.Fragment key={subject}>
+                      {subjects.map((subject, i) => (
+                        <React.Fragment key={`frag-head-${subject}-${i}`}>
                           <th className="px-2 py-2 text-[8px] font-black text-neutral-400 uppercase tracking-widest text-center border-l border-neutral-100">MAC</th>
                           <th className="px-2 py-2 text-[8px] font-black text-neutral-400 uppercase tracking-widest text-center">NPT</th>
                           <th className="px-2 py-2 text-[8px] font-black text-emerald-600 uppercase tracking-widest text-center bg-emerald-50/30">MT</th>
@@ -6715,14 +6808,14 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">
                           {student.name}
                         </td>
-                        {subjects.map(subject => {
+                        {subjects.map((subject, i) => {
                           const period = activeTab === '1T' ? '1º Trimestre' : activeTab === '2T' ? '2º Trimestre' : '3º Trimestre';
                           
                           if (activeTab === 'Anual') {
                             const subjMf = calculateAnnualMedia(student.id, subject);
                             const { threshold: tSubj } = getGradeScale(selectedClass.level);
                             return (
-                              <td key={subject} className="px-6 py-5 text-center border-l border-neutral-50">
+                              <td key={`cell-${subject}-${i}`} className="px-6 py-5 text-center border-l border-neutral-50">
                                 <span className={cn("text-sm font-black", Number(subjMf) >= tSubj ? "text-neutral-900" : "text-rose-600")}>
                                   {subjMf}
                                 </span>
@@ -6736,7 +6829,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
                           const { max, threshold: tMt } = getGradeScale(selectedClass.level);
 
                           return (
-                            <React.Fragment key={subject}>
+                            <React.Fragment key={`frag-row-${student.id}-${subject}-${i}`}>
                               <td className="px-2 py-5 text-center border-l border-neutral-50">
                                 {isEditingGrades ? (
                                   <input 
@@ -8776,12 +8869,13 @@ function ClassesView({
       room: formData.get('room') as string,
       capacity: Number(formData.get('capacity')),
       subjects: parsedSubjects.length > 0 ? parsedSubjects : undefined,
+      schoolId: editingClass?.schoolId,
     };
 
     if (editingClass) {
-      onUpdateClass(classData);
+      onUpdateClass?.(classData);
     } else {
-      onAddClass(classData);
+      onAddClass?.(classData);
     }
     setIsAdding(false);
     setEditingClass(null);
@@ -9556,7 +9650,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
           currentGrades.push({
             studentId: student.id,
             subjectId: selectedSubject,
-            period: selectedPeriod,
+            period: selectedPeriod as any,
             type,
             value: getGrade(student.id, selectedSubject, selectedPeriod, type)
           });
@@ -9642,7 +9736,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
               onChange={(e) => { setSelectedClassId(e.target.value); setSelectedSubject(''); }}
               className="bg-transparent font-black text-neutral-900 outline-none appearance-none cursor-pointer"
             >
-              {availableClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {availableClasses.map((c, i) => <option key={`${c.id}-${i}`} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           <div className="w-px h-8 bg-neutral-100 hidden lg:block" />
@@ -9653,7 +9747,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
               onChange={(e) => setSelectedSubject(e.target.value)}
               className="bg-transparent font-black text-neutral-900 outline-none appearance-none cursor-pointer"
             >
-              {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+              {subjects.map((s, i) => <option key={`${s}-${i}`} value={s}>{s}</option>)}
             </select>
           </div>
           <div className="w-px h-8 bg-neutral-100 hidden lg:block" />
@@ -10154,15 +10248,15 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
             <thead>
               <tr className="bg-neutral-50/50 border-b border-neutral-100">
                 <th rowSpan={2} className="px-6 py-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest sticky left-0 bg-neutral-50/50 z-20 border-r border-neutral-100">Aluno</th>
-                {subjects.map(s => (
-                  <th key={s} colSpan={4} className="px-4 py-3 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-r border-neutral-100">{s}</th>
+                {subjects.map((s, i) => (
+                  <th key={`${s}-${i}`} colSpan={4} className="px-4 py-3 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-r border-neutral-100">{s}</th>
                 ))}
                 <th colSpan={5} className="px-6 py-3 text-[10px] font-black text-emerald-700 uppercase tracking-widest text-center bg-emerald-50/50 border-b border-neutral-100">Resumo Final</th>
                 <th rowSpan={2} className="px-6 py-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-neutral-100">Acção</th>
               </tr>
               <tr className="bg-neutral-50/30 border-b border-neutral-100">
-                {subjects.map(s => (
-                  <React.Fragment key={`${s}-sub`}>
+                {subjects.map((s, i) => (
+                  <React.Fragment key={`${s}-sub-${i}`}>
                     <th className="px-2 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT1</th>
                     <th className="px-2 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT2</th>
                     <th className="px-2 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT3</th>
@@ -10189,13 +10283,13 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                     <td className="px-6 py-4 sticky left-0 bg-white group-hover:bg-neutral-50/50 z-10 border-r border-neutral-100">
                       <p className="text-xs font-black text-neutral-900 truncate max-w-[180px]">{student.name}</p>
                     </td>
-                    {subjects.map(subject => {
+                    {subjects.map((subject, i) => {
                       const s1 = getSubjectMT(student.id, subject, '1º Trimestre');
                       const s2 = getSubjectMT(student.id, subject, '2º Trimestre');
                       const s3 = getSubjectMT(student.id, subject, '3º Trimestre');
                       const smfd = calculateAnnual(student.id, subject, getGrade, selectedClass?.level);
                       return (
-                        <React.Fragment key={`${student.id}-${subject}`}>
+                        <React.Fragment key={`${student.id}-${subject}-${i}`}>
                           <td className="px-2 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
                             <span className={s1 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{s1.toFixed(1)}</span>
                           </td>
@@ -10473,14 +10567,14 @@ function BoletimView({ students, classes, grades, getGrade, schoolSettings, setS
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-50">
-                  {subjects.map(subject => {
+                  {subjects.map((subject, i) => {
                     const m1 = calculateMT(selectedStudentId, subject, '1º Trimestre', getGrade, selectedClass?.level);
                     const m2 = calculateMT(selectedStudentId, subject, '2º Trimestre', getGrade, selectedClass?.level);
                     const m3 = calculateMT(selectedStudentId, subject, '3º Trimestre', getGrade, selectedClass?.level);
                     const annual = calculateAnnual(selectedStudentId, subject, getGrade, selectedClass?.level);
 
                     return (
-                      <tr key={subject} className="hover:bg-neutral-50/30 transition-colors">
+                      <tr key={`${subject}-${i}`} className="hover:bg-neutral-50/30 transition-colors">
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-sm print:text-[10px] font-black text-neutral-900">{subject}</td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center text-sm print:text-[10px] font-bold">
                           <span className={m1 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{m1.toFixed(1)}</span>
@@ -11223,10 +11317,10 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
               <tr className="bg-neutral-100 font-bold text-[7.5px]">
                 <td colSpan={4} className="border border-black p-0.5 px-1 text-left uppercase tracking-wide font-sans">Formação Geral</td>
               </tr>
-              {officialSubjects.formacaoGeral.map(sub => {
+              {officialSubjects.formacaoGeral.map((sub, i) => {
                 const gr = getGradeValue(sub.key);
                 return (
-                  <tr key={sub.key} className="hover:bg-neutral-50">
+                  <tr key={`fg-${sub.key}-${i}`} className="hover:bg-neutral-50">
                     <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 px-1 font-bold text-left uppercase text-[7px] outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{sub.label}</td>
                     <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c10}</td>
                     <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c11}</td>
@@ -11239,10 +11333,10 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
               <tr className="bg-neutral-100 font-bold text-[7.5px]">
                 <td colSpan={4} className="border border-black p-0.5 px-1 text-left uppercase tracking-wide font-sans">Formação Específica</td>
               </tr>
-              {officialSubjects.formacaoEspecifica.map(sub => {
+              {officialSubjects.formacaoEspecifica.map((sub, i) => {
                 const gr = getGradeValue(sub.key);
                 return (
-                  <tr key={sub.key} className="hover:bg-neutral-50">
+                  <tr key={`fe-${sub.key}-${i}`} className="hover:bg-neutral-50">
                     <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 px-1 font-bold text-left uppercase text-[7px] outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{sub.label}</td>
                     <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c10}</td>
                     <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c11}</td>
@@ -11255,10 +11349,10 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
               <tr className="bg-neutral-100 font-bold text-[7.5px]">
                 <td colSpan={4} className="border border-black p-0.5 px-1 text-left uppercase tracking-wide font-sans">Opção</td>
               </tr>
-              {officialSubjects.opcao.map(sub => {
+              {officialSubjects.opcao.map((sub, i) => {
                 const gr = getGradeValue(sub.key);
                 return (
-                  <tr key={sub.key} className="hover:bg-neutral-50">
+                  <tr key={`op-${sub.key}-${i}`} className="hover:bg-neutral-50">
                     <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 px-1 font-bold text-left uppercase text-[7px] outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{sub.label}</td>
                     <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c10}</td>
                     <td contentEditable suppressContentEditableWarning className="border border-black p-0.5 text-center font-medium outline-none hover:bg-neutral-50/80 focus:bg-amber-50/60">{gr.c11}</td>
@@ -11593,11 +11687,11 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
                   ...officialSubjects.formacaoGeral,
                   ...officialSubjects.formacaoEspecifica,
                   ...officialSubjects.opcao
-                ].map(sub => {
+                ].map((sub, i) => {
                   const studentGrades = certGrades[selectedStudentId] || {};
                   const grade = studentGrades[sub.key] || { c10: '--------', c11: '--------', c12: '--------' };
                   return (
-                    <div key={sub.key} className="pt-3 first:pt-0 space-y-2">
+                    <div key={`${sub.key}-${i}`} className="pt-3 first:pt-0 space-y-2">
                       <span className="text-xs font-black text-neutral-800 uppercase block">{sub.label}</span>
                       <div className="grid grid-cols-3 gap-2">
                         <div>
