@@ -9644,7 +9644,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
   const handleStartEditing = () => {
     const currentGrades = [...grades];
     classStudents.forEach(student => {
-      (['AC1', 'AC2', 'AC3', 'MAC', 'NPT'] as const).forEach(type => {
+      (['AC1', 'AC2', 'AC3', 'MAC', 'NPT', 'Exame'] as const).forEach(type => {
         const exists = currentGrades.find(g => g.studentId === student.id && g.subjectId === selectedSubject && g.period === selectedPeriod && g.type === type);
         if (!exists) {
           currentGrades.push({
@@ -9666,7 +9666,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
     setIsEditing(false);
   };
 
-  const updateLocalGrade = (studentId: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT', value: number) => {
+  const updateLocalGrade = (studentId: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT' | 'Exame', value: number) => {
     const scale = selectedClass ? getGradeScale(selectedClass.level).max : 20;
     const clampedValue = Math.min(scale, Math.max(0, value));
     setLocalGrades(prev => {
@@ -9686,7 +9686,6 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
         const ac2 = getVal('AC2');
         const ac3 = getVal('AC3');
         const newMac = Number(((ac1 + ac2 + ac3) / 3).toFixed(1));
-
         updated = updated.map(g => 
           (g.studentId === studentId && g.subjectId === selectedSubject && g.period === selectedPeriod && g.type === 'MAC')
           ? { ...g, value: newMac }
@@ -11936,13 +11935,13 @@ function TeacherPortalView({
   const classStudents = students.filter(s => s.classId === selectedAssignment?.classId);
   const teacherClasses = classes.filter(c => teacher.assignments.some(a => a.classId === c.id));
 
-  const handleGradeChange = (studentId: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT', value: number) => {
+  const handleGradeChange = (studentId: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT' | 'Exame', value: number) => {
     if (!selectedAssignment) return;
     
     let newGrades = [...grades];
     const newValue = Math.min(getGradeScale(currentClass?.level || '').max, Math.max(0, value));
 
-    const setSingleGrade = (t: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT', val: number) => {
+    const setSingleGrade = (t: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT' | 'Exame', val: number) => {
       const idx = newGrades.findIndex(g => 
         g.studentId === studentId && 
         g.subjectId === selectedAssignment.subject && 
@@ -12149,12 +12148,13 @@ function TeacherPortalView({
                         <th className="px-2 py-3 text-center">AC3</th>
                         <th className="px-3 py-3 text-center bg-emerald-50/50 text-emerald-800">MAC</th>
                         <th className="px-3 py-3 text-center">NPT</th>
+                        {isExamClass(currentClass?.level) && <th className="px-3 py-3 text-center">Exame</th>}
                         <th className="px-3 py-3 text-center bg-blue-50/50 text-blue-800">Média</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-50">
                       {classStudents.sort((a, b) => a.name.localeCompare(b.name)).map((student, idx) => {
-                        const getVal = (type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT') => {
+                        const getVal = (type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT' | 'Exame') => {
                           const found = grades.find(g => g.studentId === student.id && g.subjectId === selectedAssignment.subject && g.period === selectedPeriod && g.type === type);
                           if (found) return found.value;
                           if (type === 'MAC') {
@@ -12171,7 +12171,8 @@ function TeacherPortalView({
                         const ac3 = getVal('AC3');
                         const mac = getVal('MAC');
                         const npt = getVal('NPT');
-                        const media = (mac + npt) / 2;
+                        const exame = getVal('Exame');
+                        const media = isExamClass(currentClass?.level) ? (mac + npt + exame) / 3 : (mac + npt) / 2;
                         const threshold = getGradeScale(currentClass?.level || '').threshold;
                         const maxVal = getGradeScale(currentClass?.level || '').max;
 
@@ -12231,6 +12232,17 @@ function TeacherPortalView({
                                 className={cn("w-16 text-center py-2 bg-neutral-50 border border-neutral-200 rounded-xl font-black text-sm focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all", npt >= threshold ? "text-neutral-900" : "text-rose-600")}
                               />
                             </td>
+                            {isExamClass(currentClass?.level) && (
+                              <td className="px-2 py-3 text-center">
+                                <input 
+                                  type="number" 
+                                  min="0" max={maxVal} step="0.1"
+                                  value={exame}
+                                  onChange={(e) => handleGradeChange(student.id, 'Exame', Number(e.target.value))}
+                                  className={cn("w-16 text-center py-2 bg-neutral-50 border border-neutral-200 rounded-xl font-black text-sm focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all", exame >= threshold ? "text-neutral-900" : "text-rose-600")}
+                                />
+                              </td>
+                            )}
                             <td className="px-3 py-3 text-center bg-blue-50/20">
                               <div className={cn(
                                 "w-12 h-10 mx-auto rounded-xl flex items-center justify-center font-black text-sm",
