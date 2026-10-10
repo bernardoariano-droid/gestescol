@@ -1,7 +1,7 @@
 {
   "name": "B.A GestEscola",
   "short_name": "GestEscola",
-  "description": "Gestão Escolar Inteligente",
+  "description": "Gestão Escolar",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#fffff#",
