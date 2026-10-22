@@ -553,7 +553,7 @@ export const generateUnifiedClassPautasPDF = (
     });
 
     autoTable(doc, {
-      startY: 45,
+      startY: 100,
       head: [headers],
       body: consolidatedRows,
       theme: 'grid',
@@ -1375,7 +1375,7 @@ export default function App() {
       exams: { title: 'Exames', subtitle: 'Lançamento de notas de exames' },
       transfers: { title: 'Transferências de Alunos', subtitle: 'Gestão de transferências' },
       calendar: { title: 'Calendário Escolar', subtitle: 'Planeamento de atividades e avaliações' },
-      archive: { title: 'Arquivo Digital', subtitle: 'Armazenamento seguro de documentos' },
+      archive: { subtitle: 'Armazenamento seguro de documentos' },
       audit: { title: 'Auditoria de Acesso', subtitle: 'Histórico de acções e registo de acessos' }
     } as Record<View, { title: string, subtitle: string }>;
 
@@ -1622,7 +1622,7 @@ export default function App() {
     const tableHeaders = [['Nº', 'Nome Completo', 'Documento BI', 'Gênero', 'Estado']];
     
     const maxListStudents = classStudents.slice(0, 45);
-    const tableData = Array.from({ length: 45 }, (_, index) => {
+    const tableData = Array.from({ length: 100 }, (_, index) => {
       const student = maxListStudents[index];
       if (student) {
         return [
