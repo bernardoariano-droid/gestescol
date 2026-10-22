@@ -103,7 +103,7 @@ function cn(...inputs: ClassValue[]) {
 
 type View = 'dashboard' | 'ai-assistant' | 'students' | 'academic' | 'finance' | 'teachers' | 'classes' | 'lists' | 'mini-pautas' | 'pauta-final' | 'boletim' | 'certificates' | 'settings' | 'users' | 'backup' | 'schools' | 'profile' | 'announcements' | 'calendar' | 'archive' | 'exams' | 'transfers' | 'audit';
 
-const LEVELS = ['Todos', '1ª Classe', '2ª Classe', '3ª Classe', '4ª Classe', '5ª Classe', '6ª Classe', '7ª Classe', '8ª Classe', '9ª Classe', '10ª Classe', '11ª Classe', '12ª Classe', 'EJA'];
+const LEVELS = ['Todos', 'Iniciação, '1ª Classe', '2ª Classe', '3ª Classe', '4ª Classe', '5ª Classe', '6ª Classe', '7ª Classe', '8ª Classe', '9ª Classe', '10ª Classe', '11ª Classe', '12ª Classe', 'Etapa 1', 'Etapa 2', 'Etapa3', 'Módulo 1', 'Modulo 2', 'Modulo 3', '];
 
 const getSubjectsByLevel = (level: string, course?: string) => {
   if (level.match(/^[1-4]ª Classe/)) {
