@@ -6,15 +6,17 @@ import {
   testConnection, 
   clearAllSupabaseData, 
   performFullBackup 
-} from "../netlify/functions/supabase-helper.js";
+} from "../netlify/functions/supabase-helper.ts";
 
 const app = express();
 
 // Maximize JSON body limit for full-backup uploads
 app.use(express.json({ limit: '50mb' }));
 
+const router = express.Router();
+
 // Database Connection Health Check
-app.get("/api/test-connection", async (req, res) => {
+router.get("/test-connection", async (req, res) => {
   try {
     const connected = await testConnection();
     res.json({ connected });
@@ -24,7 +26,7 @@ app.get("/api/test-connection", async (req, res) => {
 });
 
 // Pull All Data from Database
-app.get("/api/get-data", async (req, res) => {
+router.get("/get-data", async (req, res) => {
   try {
     const data = await pullFromSupabase();
     if (!data) {
@@ -38,7 +40,7 @@ app.get("/api/get-data", async (req, res) => {
 });
 
 // Sync Single Item to Database
-app.post("/api/sync-data", async (req, res) => {
+router.post("/sync-data", async (req, res) => {
   try {
     const { action } = req.body;
     if (!action) {
@@ -53,7 +55,7 @@ app.post("/api/sync-data", async (req, res) => {
 });
 
 // Clear All Database Data
-app.post("/api/clear-database", async (req, res) => {
+router.post("/clear-database", async (req, res) => {
   try {
     await clearAllSupabaseData();
     res.json({ success: true });
@@ -63,7 +65,7 @@ app.post("/api/clear-database", async (req, res) => {
 });
 
 // Perform Server-Side Full Backup Upload
-app.post("/api/full-backup", async (req, res) => {
+router.post("/full-backup", async (req, res) => {
   try {
     const { data } = req.body;
     if (!data) {
@@ -78,7 +80,7 @@ app.post("/api/full-backup", async (req, res) => {
 });
 
 // AI Route
-app.post("/api/generate-lesson-plan", async (req, res) => {
+router.post("/generate-lesson-plan", async (req, res) => {
   try {
     const { theme, subtheme, targetClass } = req.body;
     
@@ -158,5 +160,9 @@ Por favor, responda apenas com o JSON válido, sem markdown adicional.`;
     res.status(500).json({ error: 'Erro ao gerar o plano de aula com o Assistente AI' });
   }
 });
+
+// Support both /api/... and direct /... rewrites on Vercel
+app.use("/api", router);
+app.use("/", router);
 
 export default app;
