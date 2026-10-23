@@ -103,7 +103,7 @@ function cn(...inputs: ClassValue[]) {
 
 type View = 'dashboard' | 'ai-assistant' | 'students' | 'academic' | 'finance' | 'teachers' | 'classes' | 'lists' | 'mini-pautas' | 'pauta-final' | 'boletim' | 'certificates' | 'settings' | 'users' | 'backup' | 'schools' | 'profile' | 'announcements' | 'calendar' | 'archive' | 'exams' | 'transfers' | 'audit';
 
-const LEVELS = ['Todos', 'Iniciação', '1ª Classe', '2ª Classe', '3ª Classe', '4ª Classe', '5ª Classe', '6ª Classe', '7ª Classe', '8ª Classe', '9ª Classe', '10ª Classe', '11ª Classe', '12ª Classe', 'Etapa 1', 'Etapa 2', 'Etapa3', 'Módulo 1', 'Modulo 2', 'Modulo 3', '];
+const LEVELS = ['Todos', 'Iniciação', '1ª Classe', '2ª Classe', '3ª Classe', '4ª Classe', '5ª Classe', '6ª Classe', '7ª Classe', '8ª Classe', '9ª Classe', '10ª Classe', '11ª Classe', '12ª Classe', 'Etapa 1', 'Etapa 2', 'Etapa 3', 'Módulo 1', 'Módulo 2', 'Módulo 3', 'EJA'];
 
 const getSubjectsByLevel = (level: string, course?: string) => {
   if (level.match(/^[1-4]ª Classe/)) {
@@ -171,7 +171,17 @@ const getSubjectsByLevel = (level: string, course?: string) => {
       'Física', 'Química', 'Biologia', 'Geologia', 'História', 'Geografia', 'Psicologia', 'Economia', 'Introdução ao Direito'
     ];
   }
-  if (level === 'EJA') {
+  if (level === 'Iniciação' || level.toLowerCase().includes('inicia')) {
+    return [
+      'Língua Portuguesa', 
+      'Matemática', 
+      'Estudo do Meio', 
+      'Expressão Motora', 
+      'Expressão Plástica', 
+      'Expressão Musical'
+    ];
+  }
+  if (level === 'EJA' || level.includes('Etapa') || level.includes('Módulo') || level.includes('Modulo')) {
     return [
       'Língua Portuguesa', 
       'Matemática', 
@@ -227,7 +237,7 @@ export const calculateAnnual = (studentId: string, subjectId: string, getGradeFu
 };
 
 const getGradeScale = (level: string) => {
-  if (level.match(/^[1-6]ª Classe/) || level.includes('EJA') || level.includes('Ensino Primário')) {
+  if (level.match(/^[1-6]ª Classe/) || level.includes('Inicia') || level.includes('Etapa') || level.includes('Módulo') || level.includes('Modulo') || level.includes('EJA') || level.includes('Ensino Primário')) {
     return { max: 10, threshold: 5 };
   }
   return { max: 20, threshold: 10 };
@@ -1415,7 +1425,7 @@ export default function App() {
       exams: { title: 'Exames', subtitle: 'Lançamento de notas de exames' },
       transfers: { title: 'Transferências de Alunos', subtitle: 'Gestão de transferências' },
       calendar: { title: 'Calendário Escolar', subtitle: 'Planeamento de atividades e avaliações' },
-      archive: { subtitle: 'Armazenamento seguro de documentos' },
+      archive: { title: 'Arquivo Digital', subtitle: 'Armazenamento seguro de documentos' },
       audit: { title: 'Auditoria de Acesso', subtitle: 'Histórico de acções e registo de acessos' }
     } as Record<View, { title: string, subtitle: string }>;
 
@@ -1678,9 +1688,9 @@ export default function App() {
 
     const tableHeaders = [['Nº', 'Nome Completo', 'Documento BI', 'Gênero', 'Estado']];
     
-    const maxListStudents = classStudents.slice(0, 45);
-    const tableData = Array.from({ length: 100 }, (_, index) => {
-      const student = maxListStudents[index];
+    const listLength = Math.max(classStudents.length, 100);
+    const tableData = Array.from({ length: listLength }, (_, index) => {
+      const student = classStudents[index];
       if (student) {
         return [
           index + 1,
