@@ -190,11 +190,14 @@ const getSubjectsForClass = (cls?: Class) => {
   return getSubjectsByLevel(cls.level, cls.course);
 };
 
-const isExamClass = (level: string = '') => {
-  return !!level.match(/6ª Classe|9ª Classe|12ª Classe/i);
+export const isExamClass = (level: string = '') => {
+  if (!level) return false;
+  return /6ª\s*Classe|9ª\s*Classe|12ª\s*Classe/i.test(level) || 
+         /\b(6|9|12)[ªaºo]?\s*classe\b/i.test(level) ||
+         /\b(6|9|12)[ªa]\b/i.test(level);
 };
 
-export const calculateMT = (studentId: string, subjectId: string, period: string, getGradeFunc: (s: string, sub: string, p: string, t: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number, level: string = '') => {
+export const calculateMT = (studentId: string, subjectId: string, period: string, getGradeFunc: (s: string, sub: string, p: string, t?: any) => number, level: string = '') => {
   if (isExamClass(level) && period === '3º Trimestre') {
     const mt1 = calculateMT(studentId, subjectId, '1º Trimestre', getGradeFunc, level);
     const mt2 = calculateMT(studentId, subjectId, '2º Trimestre', getGradeFunc, level);
@@ -207,14 +210,17 @@ export const calculateMT = (studentId: string, subjectId: string, period: string
   return (mac + npt) / 2;
 };
 
-export const calculateAnnual = (studentId: string, subjectId: string, getGradeFunc: (s: string, sub: string, p: string, t: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number, level: string = '') => {
+export const calculateAnnual = (studentId: string, subjectId: string, getGradeFunc: (s: string, sub: string, p: string, t?: any) => number, level: string = '') => {
   const mt1 = calculateMT(studentId, subjectId, '1º Trimestre', getGradeFunc, level);
   const mt2 = calculateMT(studentId, subjectId, '2º Trimestre', getGradeFunc, level);
   const mt3 = calculateMT(studentId, subjectId, '3º Trimestre', getGradeFunc, level);
   
   if (isExamClass(level)) {
-    const en = getGradeFunc(studentId, subjectId, 'Exame', 'NPT');
-    return (0.6 * mt3) + (0.4 * en);
+    const en = getGradeFunc(studentId, subjectId, 'Exame', 'Exame') || getGradeFunc(studentId, subjectId, 'Exame', 'NPT');
+    if (en > 0) {
+      return (0.6 * mt3) + (0.4 * en);
+    }
+    return mt3;
   }
   
   return (mt1 + mt2 + mt3) / 3;
@@ -230,7 +236,7 @@ const getGradeScale = (level: string) => {
 export const generateUnifiedClassPautasPDF = (
   selectedClass: Class,
   classStudents: Student[],
-  getGradeFunc: (sId: string, subId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
+  getGradeFunc: (sId: string, subId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => number,
   schoolSettings: SchoolSettings,
   showToast?: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void
 ) => {
@@ -408,10 +414,13 @@ export const generateUnifiedClassPautasPDF = (
       let repCount = 0;
       let desCount = 0;
 
+      const isExam = isExamClass(selectedClass.level);
+
       const rows = classStudents.map((student, idx) => {
         const mt1 = calculateMT(student.id, subject, '1º Trimestre', getGradeFunc, selectedClass.level);
         const mt2 = calculateMT(student.id, subject, '2º Trimestre', getGradeFunc, selectedClass.level);
         const mt3 = calculateMT(student.id, subject, '3º Trimestre', getGradeFunc, selectedClass.level);
+        const examGrade = isExam ? (getGradeFunc(student.id, subject, 'Exame', 'Exame') || getGradeFunc(student.id, subject, 'Exame', 'NPT') || 0) : 0;
         const mfd = calculateAnnual(student.id, subject, getGradeFunc, selectedClass.level);
 
         let res = 'Aprovado';
@@ -426,6 +435,20 @@ export const generateUnifiedClassPautasPDF = (
           repCount++;
         }
 
+        if (isExam) {
+          return [
+            (idx + 1).toString(),
+            student.bi || student.id.substring(0, 8).toUpperCase(),
+            student.name,
+            mt1.toFixed(1),
+            mt2.toFixed(1),
+            mt3.toFixed(1),
+            examGrade > 0 ? examGrade.toFixed(1) : '-',
+            mfd.toFixed(1),
+            res
+          ];
+        }
+
         return [
           (idx + 1).toString(),
           student.bi || student.id.substring(0, 8).toUpperCase(),
@@ -438,9 +461,13 @@ export const generateUnifiedClassPautasPDF = (
         ];
       });
 
+      const headCols = isExam 
+        ? ['Nº', 'Processo', 'Nome Completo do Estudante', '1º Trim (MT1)', '2º Trim (MT2)', '3º Trim (MT3)', 'Exame', 'Média Final (MFD)', 'Resultado']
+        : ['Nº', 'Processo', 'Nome Completo do Estudante', '1º Trim (MT1)', '2º Trim (MT2)', '3º Trim (MT3)', 'Média Final (MFD)', 'Resultado'];
+
       autoTable(doc, {
         startY: 45,
-        head: [['Nº', 'Processo', 'Nome Completo do Estudante', '1º Trim (MT1)', '2º Trim (MT2)', '3º Trim (MT3)', 'Média Final (MFD)', 'Resultado']],
+        head: [headCols],
         body: rows,
         theme: 'grid',
         headStyles: {
@@ -454,7 +481,17 @@ export const generateUnifiedClassPautasPDF = (
           fontSize: 8,
           textColor: [30, 41, 59]
         },
-        columnStyles: {
+        columnStyles: isExam ? {
+          0: { halign: 'center', cellWidth: 10 },
+          1: { halign: 'center', cellWidth: 24 },
+          2: { halign: 'left' },
+          3: { halign: 'center', cellWidth: 24 },
+          4: { halign: 'center', cellWidth: 24 },
+          5: { halign: 'center', cellWidth: 24 },
+          6: { halign: 'center', cellWidth: 22, fontStyle: 'bold' },
+          7: { halign: 'center', cellWidth: 26, fontStyle: 'bold' },
+          8: { halign: 'center', cellWidth: 24, fontStyle: 'bold' }
+        } : {
           0: { halign: 'center', cellWidth: 12 },
           1: { halign: 'center', cellWidth: 26 },
           2: { halign: 'left' },
@@ -466,7 +503,8 @@ export const generateUnifiedClassPautasPDF = (
         },
         didParseCell: (data) => {
           if (data.section === 'body') {
-            if (data.column.index >= 3 && data.column.index <= 6) {
+            const lastNumCol = isExam ? 7 : 6;
+            if (data.column.index >= 3 && data.column.index <= lastNumCol) {
               const val = parseFloat(data.cell.text[0]);
               if (!isNaN(val)) {
                 if (val < threshold) {
@@ -475,7 +513,8 @@ export const generateUnifiedClassPautasPDF = (
                 }
               }
             }
-            if (data.column.index === 7) {
+            const resCol = isExam ? 8 : 7;
+            if (data.column.index === resCol) {
               const text = data.cell.text[0];
               if (text === 'Aprovado') data.cell.styles.textColor = [22, 101, 52];
               else if (text === 'Reprovado') data.cell.styles.textColor = [225, 29, 72];
@@ -1117,6 +1156,7 @@ export default function App() {
           period: g.period,
           type: g.type,
           value: g.value,
+          nota_exame: g.notaExame !== undefined ? g.notaExame : (g.type === 'Exame' || g.period === 'Exame' ? g.value : null),
           school_id: g.schoolId || 's1'
         }));
         await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
@@ -1397,7 +1437,24 @@ export default function App() {
     setIsEditingHeader(false);
   }, [activeView]);
 
-  const getGrade = useCallback((studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' = 'MAC') => {
+  const getGrade = useCallback((studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame' = 'MAC') => {
+    if (type === 'Exame' || period === 'Exame') {
+      const examGrade = grades.find(g => 
+        g.studentId === studentId && 
+        g.subjectId === subjectId && 
+        (g.type === 'Exame' || g.period === 'Exame')
+      );
+      if (examGrade) return examGrade.value;
+
+      const withNota = grades.find(g => 
+        g.studentId === studentId && 
+        g.subjectId === subjectId && 
+        g.notaExame !== undefined && 
+        g.notaExame !== null
+      );
+      if (withNota && withNota.notaExame !== undefined) return withNota.notaExame;
+    }
+
     const existing = grades.find(g => g.studentId === studentId && g.subjectId === subjectId && g.period === period && g.type === type);
     if (existing) return existing.value;
 
@@ -2812,7 +2869,15 @@ export default function App() {
                 <ArchiveView />
               )}
               {activeView === 'exams' && (
-                <ExamsView classes={filteredClasses} students={filteredStudents} />
+                <ExamsView 
+                  classes={filteredClasses} 
+                  students={filteredStudents} 
+                  grades={grades}
+                  onUpdateGrades={onUpdateGrades}
+                  schoolSettings={schoolSettings}
+                  showToast={showToast}
+                  currentUser={currentUser}
+                />
               )}
               {activeView === 'transfers' && (
                 <TransfersView students={filteredStudents} />
@@ -6303,10 +6368,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
   const stats = getClassStats();
 
   const calculateAnnualMedia = (studentId: string, subjectId: string) => {
-    const g1 = getMT(studentId, subjectId, '1º Trimestre');
-    const g2 = getMT(studentId, subjectId, '2º Trimestre');
-    const g3 = getMT(studentId, subjectId, '3º Trimestre');
-    return ((g1 + g2 + g3) / 3).toFixed(1);
+    return calculateAnnual(studentId, subjectId, getGrade, selectedClass.level).toFixed(1);
   };
 
   const exportToExcel = () => {
@@ -9612,7 +9674,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
   students: Student[],
   grades: Grade[],
   onUpdateGrades: (newGrades: Grade[]) => void,
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => number,
   schoolSettings: SchoolSettings,
   setSchoolSettings: (s: SchoolSettings) => void,
   currentUser: any,
@@ -9670,11 +9732,34 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
     const scale = selectedClass ? getGradeScale(selectedClass.level).max : 20;
     const clampedValue = Math.min(scale, Math.max(0, value));
     setLocalGrades(prev => {
-      let updated = prev.map(g => 
-        (g.studentId === studentId && g.subjectId === selectedSubject && g.period === selectedPeriod && g.type === type) 
-        ? { ...g, value: clampedValue } 
-        : g
-      );
+      let updated = prev.map(g => {
+        if (g.studentId === studentId && g.subjectId === selectedSubject) {
+          if (type === 'Exame' || selectedPeriod === 'Exame') {
+            if (g.type === 'Exame' || g.period === 'Exame') {
+              return { ...g, value: clampedValue, notaExame: clampedValue };
+            }
+          }
+          if (g.period === selectedPeriod && g.type === type) {
+            return { ...g, value: clampedValue };
+          }
+        }
+        return g;
+      });
+
+      if (type === 'Exame' || selectedPeriod === 'Exame') {
+        const hasExame = updated.some(g => g.studentId === studentId && g.subjectId === selectedSubject && g.period === 'Exame' && g.type === 'Exame');
+        if (!hasExame) {
+          updated.push({
+            studentId,
+            subjectId: selectedSubject,
+            period: 'Exame',
+            type: 'Exame',
+            value: clampedValue,
+            notaExame: clampedValue,
+            schoolId: selectedClass?.schoolId
+          });
+        }
+      }
 
       if (['AC1', 'AC2', 'AC3'].includes(type)) {
         const getVal = (t: 'AC1' | 'AC2' | 'AC3') => {
@@ -9702,20 +9787,27 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
   };
 
   const handleExportExcel = () => {
+    const isExam = isExamClass(selectedClass?.level);
     const data = classStudents.map((student, index) => {
       const mt1 = getMT(student.id, selectedSubject, '1º Trimestre');
       const mt2 = getMT(student.id, selectedSubject, '2º Trimestre');
       const mt3 = getMT(student.id, selectedSubject, '3º Trimestre');
+      const examGrade = getGrade(student.id, selectedSubject, 'Exame', 'Exame') || getGrade(student.id, selectedSubject, 'Exame', 'NPT') || 0;
       const annual = calculateAnnual(student.id, selectedSubject, getGrade, selectedClass?.level);
-      return {
+      
+      const row: any = {
         'Nº': index + 1,
         'Nome do Aluno': student.name,
         'MT1': mt1.toFixed(1),
         'MT2': mt2.toFixed(1),
         'MT3': mt3.toFixed(1),
-        'Média Anual': annual.toFixed(1),
-        'Resultado': annual >= getGradeScale(selectedClass?.level || '').threshold ? 'Aprovado' : 'Reprovado'
       };
+      if (isExam) {
+        row['Nota de Exame'] = examGrade > 0 ? examGrade.toFixed(1) : '-';
+      }
+      row['Média Final'] = annual.toFixed(1);
+      row['Resultado'] = annual >= getGradeScale(selectedClass?.level || '').threshold ? 'Aprovado' : 'Reprovado';
+      return row;
     });
 
     const ws = XLSX.utils.json_to_sheet(data);
@@ -9888,19 +9980,38 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                         <th className="px-3 py-3 sm:px-4 sm:py-4 print:px-1 print:py-1 text-center font-black text-emerald-700 bg-emerald-50/50">MAC</th>
                       </>
                     )}
-                    {!(isExamClass(selectedClass?.level) && selectedPeriod === '3º Trimestre') && (
-                      <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">{selectedPeriod === 'Exame' ? 'Exame Nacional' : 'NPT'}</th>
+                    {selectedPeriod === 'Exame' && (
+                      <>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-500">MT1</th>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-500">MT2</th>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-500">MT3 (CAP)</th>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-amber-700 bg-amber-50/60">Nota de Exame</th>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-emerald-700 bg-emerald-50/60">Média Final (MFD)</th>
+                      </>
                     )}
                     {selectedPeriod !== 'Exame' && (
-                      <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-blue-700 bg-blue-50/50">MT</th>
+                      <>
+                        {isExamClass(selectedClass?.level) && selectedPeriod === '3º Trimestre' ? (
+                          <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-amber-700 bg-amber-50/50">Nota de Exame</th>
+                        ) : (
+                          <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-600">NPT</th>
+                        )}
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-blue-700 bg-blue-50/50">
+                          {isExamClass(selectedClass?.level) && selectedPeriod === '3º Trimestre' ? 'MT3 (CAP)' : 'MT'}
+                        </th>
+                      </>
                     )}
                   </>
                 ) : (
                   <>
-                    <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">MT1</th>
-                    <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">MT2</th>
-                    <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">MT3</th>
-                    <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">Média Anual</th>
+                    <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">MT1</th>
+                    <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">MT2</th>
+                    <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">MT3</th>
+                    {isExamClass(selectedClass?.level) && (
+                      <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-amber-700 bg-amber-50/50">Nota de Exame</th>
+                    )}
+                    <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-emerald-700 bg-emerald-50/50">Média Final</th>
+                    <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-neutral-900">Resultado</th>
                   </>
                 )}
               </tr>
@@ -9908,8 +10019,8 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
             <tbody className="divide-y divide-neutral-50">
               {classStudents.map((student, index) => {
                 if (viewMode === 'entry') {
-                  const getLocalOrGrade = (s: string, sub: string, p: string, t: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT') => isEditing 
-                    ? localGrades.find(g => g.studentId === s && g.subjectId === sub && g.period === p && g.type === t)?.value ?? getGrade(s, sub, p, t)
+                  const getLocalOrGrade = (s: string, sub: string, p: string, t: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT' | 'Exame') => isEditing 
+                    ? localGrades.find(g => g.studentId === s && g.subjectId === sub && (g.period === p || (p === 'Exame' && (g.period === 'Exame' || g.type === 'Exame'))) && g.type === t)?.value ?? getGrade(s, sub, p, t)
                     : getGrade(s, sub, p, t);
                   
                   const ac1 = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'AC1');
@@ -9917,81 +10028,141 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                   const ac3 = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'AC3');
                   const mac = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'MAC');
                   const npt = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'NPT');
+                  const exame = getLocalOrGrade(student.id, selectedSubject, 'Exame', 'Exame') || getLocalOrGrade(student.id, selectedSubject, 'Exame', 'NPT');
 
-                  const mt = calculateMT(student.id, selectedSubject, selectedPeriod, getLocalOrGrade, selectedClass?.level);
                   const exam = isExamClass(selectedClass?.level);
                   const { max: maxScale, threshold } = getGradeScale(selectedClass?.level || '');
+                  const mt = calculateMT(student.id, selectedSubject, selectedPeriod, getLocalOrGrade, selectedClass?.level);
+
+                  if (selectedPeriod === 'Exame') {
+                    const mt1 = calculateMT(student.id, selectedSubject, '1º Trimestre', getLocalOrGrade, selectedClass?.level);
+                    const mt2 = calculateMT(student.id, selectedSubject, '2º Trimestre', getLocalOrGrade, selectedClass?.level);
+                    const mt3 = calculateMT(student.id, selectedSubject, '3º Trimestre', getLocalOrGrade, selectedClass?.level);
+                    const mfd = calculateAnnual(student.id, selectedSubject, getLocalOrGrade, selectedClass?.level);
+
+                    return (
+                      <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors group">
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-400">{index + 1}</td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2">
+                          <p className="text-sm font-black text-neutral-900">{student.name}</p>
+                          <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-tighter">{student.bi}</p>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                          <span className={cn(mt1 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt1.toFixed(1)}</span>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                          <span className={cn(mt2 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt2.toFixed(1)}</span>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                          <span className={cn(mt3 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt3.toFixed(1)}</span>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-amber-50/20">
+                          {isEditing ? (
+                            <input 
+                              type="number" 
+                              min="0" max={maxScale} step="0.1"
+                              value={exame}
+                              onChange={(e) => updateLocalGrade(student.id, 'Exame', Number(e.target.value))}
+                              className={cn("w-16 p-2 bg-white border border-amber-300 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500", exame >= threshold ? "text-amber-950 font-black" : "text-rose-600 font-black")}
+                              title="Nota de Exame Nacional"
+                            />
+                          ) : (
+                            <span className={cn("text-sm font-black", exame >= threshold ? "text-amber-950" : "text-rose-600")}>
+                              {exame > 0 ? exame.toFixed(1) : '-'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-emerald-50/20">
+                          <span className={cn("text-sm font-black", mfd >= threshold ? "text-emerald-950" : "text-rose-600")}>
+                            {mfd.toFixed(1)}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  }
 
                   return (
                     <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors group">
-                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">{index + 1}</td>
-                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-400">{index + 1}</td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2">
                         <p className="text-sm font-black text-neutral-900">{student.name}</p>
                         <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-tighter">{student.bi}</p>
                       </td>
-                      {!(exam && selectedPeriod === 'Exame') && (
-                        <>
-                          <td className="px-2 py-3 text-center">
-                            {isEditing ? (
-                              <input 
-                                type="number" 
-                                min="0" max={maxScale} step="0.1"
-                                value={ac1}
-                                onChange={(e) => updateLocalGrade(student.id, 'AC1', Number(e.target.value))}
-                                className={cn("w-14 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", ac1 >= threshold ? "text-neutral-900" : "text-rose-600")}
-                                title="Avaliação Contínua 1"
-                              />
-                            ) : (
-                              <span className={cn("text-sm font-bold", ac1 >= threshold ? "text-neutral-900" : "text-rose-600")}>{ac1}</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-3 text-center">
-                            {isEditing ? (
-                              <input 
-                                type="number" 
-                                min="0" max={maxScale} step="0.1"
-                                value={ac2}
-                                onChange={(e) => updateLocalGrade(student.id, 'AC2', Number(e.target.value))}
-                                className={cn("w-14 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", ac2 >= threshold ? "text-neutral-900" : "text-rose-600")}
-                                title="Avaliação Contínua 2"
-                              />
-                            ) : (
-                              <span className={cn("text-sm font-bold", ac2 >= threshold ? "text-neutral-900" : "text-rose-600")}>{ac2}</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-3 text-center">
-                            {isEditing ? (
-                              <input 
-                                type="number" 
-                                min="0" max={maxScale} step="0.1"
-                                value={ac3}
-                                onChange={(e) => updateLocalGrade(student.id, 'AC3', Number(e.target.value))}
-                                className={cn("w-14 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", ac3 >= threshold ? "text-neutral-900" : "text-rose-600")}
-                                title="Avaliação Contínua 3"
-                              />
-                            ) : (
-                              <span className={cn("text-sm font-bold", ac3 >= threshold ? "text-neutral-900" : "text-rose-600")}>{ac3}</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-3 text-center bg-emerald-50/20">
-                            {isEditing ? (
-                              <input 
-                                type="number" 
-                                min="0" max={maxScale} step="0.1"
-                                value={mac}
-                                onChange={(e) => updateLocalGrade(student.id, 'MAC', Number(e.target.value))}
-                                className={cn("w-16 p-2 bg-emerald-100/50 border border-emerald-300 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", mac >= threshold ? "text-emerald-950" : "text-rose-600")}
-                                title="Média de Avaliação Contínua (MAC = (AC1+AC2+AC3)/3)"
-                              />
-                            ) : (
-                              <span className={cn("text-sm font-black", mac >= threshold ? "text-emerald-950 font-black" : "text-rose-600 font-black")}>{mac}</span>
-                            )}
-                          </td>
-                        </>
-                      )}
-                      {!(exam && selectedPeriod === '3º Trimestre') && (
-                        <td className="px-2 py-3 text-center">
-                          {isEditing ? (
+                      <td className="px-2 py-3 text-center">
+                        {isEditing ? (
+                          <input 
+                            type="number" 
+                            min="0" max={maxScale} step="0.1"
+                            value={ac1}
+                            onChange={(e) => updateLocalGrade(student.id, 'AC1', Number(e.target.value))}
+                            className={cn("w-14 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", ac1 >= threshold ? "text-neutral-900" : "text-rose-600")}
+                            title="Avaliação Contínua 1"
+                          />
+                        ) : (
+                          <span className={cn("text-sm font-bold", ac1 >= threshold ? "text-neutral-900" : "text-rose-600")}>{ac1}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-3 text-center">
+                        {isEditing ? (
+                          <input 
+                            type="number" 
+                            min="0" max={maxScale} step="0.1"
+                            value={ac2}
+                            onChange={(e) => updateLocalGrade(student.id, 'AC2', Number(e.target.value))}
+                            className={cn("w-14 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", ac2 >= threshold ? "text-neutral-900" : "text-rose-600")}
+                            title="Avaliação Contínua 2"
+                          />
+                        ) : (
+                          <span className={cn("text-sm font-bold", ac2 >= threshold ? "text-neutral-900" : "text-rose-600")}>{ac2}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-3 text-center">
+                        {isEditing ? (
+                          <input 
+                            type="number" 
+                            min="0" max={maxScale} step="0.1"
+                            value={ac3}
+                            onChange={(e) => updateLocalGrade(student.id, 'AC3', Number(e.target.value))}
+                            className={cn("w-14 p-2 bg-neutral-50 border border-neutral-200 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", ac3 >= threshold ? "text-neutral-900" : "text-rose-600")}
+                            title="Avaliação Contínua 3"
+                          />
+                        ) : (
+                          <span className={cn("text-sm font-bold", ac3 >= threshold ? "text-neutral-900" : "text-rose-600")}>{ac3}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-3 text-center bg-emerald-50/20">
+                        {isEditing ? (
+                          <input 
+                            type="number" 
+                            min="0" max={maxScale} step="0.1"
+                            value={mac}
+                            onChange={(e) => updateLocalGrade(student.id, 'MAC', Number(e.target.value))}
+                            className={cn("w-16 p-2 bg-emerald-100/50 border border-emerald-300 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500", mac >= threshold ? "text-emerald-950" : "text-rose-600")}
+                            title="Média de Avaliação Contínua (MAC = (AC1+AC2+AC3)/3)"
+                          />
+                        ) : (
+                          <span className={cn("text-sm font-black", mac >= threshold ? "text-emerald-950 font-black" : "text-rose-600 font-black")}>{mac}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-3 text-center">
+                        {exam && selectedPeriod === '3º Trimestre' ? (
+                          isEditing ? (
+                            <input 
+                              type="number" 
+                              min="0" max={maxScale} step="0.1"
+                              value={exame}
+                              onChange={(e) => updateLocalGrade(student.id, 'Exame', Number(e.target.value))}
+                              placeholder="Exame"
+                              className={cn("w-16 p-2 bg-amber-50/50 border border-amber-300 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500", exame >= threshold ? "text-amber-950 font-black" : "text-rose-600 font-black")}
+                              title="Nota de Exame Nacional"
+                            />
+                          ) : (
+                            <span className={cn("text-sm font-black", exame >= threshold ? "text-amber-950" : "text-rose-600")}>
+                              {exame > 0 ? exame.toFixed(1) : '-'}
+                            </span>
+                          )
+                        ) : (
+                          isEditing ? (
                             <input 
                               type="number" 
                               min="0" max={maxScale} step="0.1"
@@ -10001,45 +10172,64 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                             />
                           ) : (
                             <span className={cn("text-sm font-black", npt >= threshold ? "text-neutral-900" : "text-rose-600")}>{npt}</span>
-                          )}
-                        </td>
-                      )}
-                      {selectedPeriod !== 'Exame' && (
-                        <td className="px-2 py-3 text-center bg-blue-50/20">
-                          <span className={cn(
-                            "text-sm font-black",
-                            mt >= threshold ? "text-blue-950 font-black" : "text-rose-600 font-black"
-                          )}>{mt.toFixed(1)}</span>
-                        </td>
-                      )}
+                          )
+                        )}
+                      </td>
+                      <td className="px-2 py-3 text-center bg-blue-50/20">
+                        <span className={cn(
+                          "text-sm font-black",
+                          mt >= threshold ? "text-blue-950 font-black" : "text-rose-600 font-black"
+                        )}>{mt.toFixed(1)}</span>
+                      </td>
                     </tr>
                   );
                 } else {
+                  // Resumo Anual
                   const mt1 = getMT(student.id, selectedSubject, '1º Trimestre');
                   const mt2 = getMT(student.id, selectedSubject, '2º Trimestre');
                   const mt3 = getMT(student.id, selectedSubject, '3º Trimestre');
+                  const examGrade = getGrade(student.id, selectedSubject, 'Exame', 'Exame') || getGrade(student.id, selectedSubject, 'Exame', 'NPT') || 0;
                   const annual = calculateAnnual(student.id, selectedSubject, getGrade, selectedClass?.level);
+                  const isExam = isExamClass(selectedClass?.level);
+                  const { threshold } = getGradeScale(selectedClass?.level || '');
+                  const isApproved = annual >= threshold;
 
                   return (
                     <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors group">
-                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">{index + 1}</td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-400">{index + 1}</td>
                       <td className="px-8 py-5">
                         <p className="text-sm font-black text-neutral-900">{student.name}</p>
+                        <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-tighter">{student.bi}</p>
                       </td>
-                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">
-                        <span className={cn(mt1 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600")}>{mt1.toFixed(1)}</span>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                        <span className={cn(mt1 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt1.toFixed(1)}</span>
                       </td>
-                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">
-                        <span className={cn(mt2 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600")}>{mt2.toFixed(1)}</span>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                        <span className={cn(mt2 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt2.toFixed(1)}</span>
                       </td>
-                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">
-                        <span className={cn(mt3 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600")}>{mt3.toFixed(1)}</span>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                        <span className={cn(mt3 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt3.toFixed(1)}</span>
                       </td>
-                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">
+                      {isExam && (
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-amber-50/20 font-bold">
+                          <span className={examGrade >= threshold ? "text-amber-950 font-black" : "text-rose-600 font-black"}>
+                            {examGrade > 0 ? examGrade.toFixed(1) : '-'}
+                          </span>
+                        </td>
+                      )}
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-emerald-50/20">
                         <span className={cn(
                           "text-sm font-black",
-                          annual >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"
+                          isApproved ? "text-emerald-950 font-black" : "text-rose-600 font-black"
                         )}>{annual.toFixed(1)}</span>
+                      </td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                        <span className={cn(
+                          "text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md",
+                          isApproved ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                        )}>
+                          {isApproved ? 'Aprovado' : 'Reprovado'}
+                        </span>
                       </td>
                     </tr>
                   );
@@ -10082,7 +10272,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   classes: Class[], 
   students: Student[],
   grades: Grade[],
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => number,
   schoolSettings: SchoolSettings,
   setSchoolSettings: (s: SchoolSettings) => void,
   onIssueCertificate: (studentId: string, bulkIds?: string[]) => void,
@@ -10099,8 +10289,14 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   const subjects = getSubjectsForClass(selectedClass);
   const classStudents = students.filter(s => s.classId === selectedClassId).sort((a, b) => a.name.localeCompare(b.name));
 
+  const isExam = isExamClass(selectedClass?.level);
+
   const getSubjectMT = (studentId: string, subjectId: string, period: string) => {
     return calculateMT(studentId, subjectId, period, getGrade, selectedClass?.level);
+  };
+
+  const getSubjectExam = (studentId: string, subjectId: string) => {
+    return getGrade(studentId, subjectId, 'Exame', 'Exame') || getGrade(studentId, subjectId, 'Exame', 'NPT') || 0;
   };
 
   const getSubjectMFD = (studentId: string, subjectId: string) => {
@@ -10110,6 +10306,18 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   const getTrimesterAvg = (studentId: string, period: string) => {
     if (subjects.length === 0) return 0;
     const sum = subjects.reduce((acc, subject) => acc + getSubjectMT(studentId, subject, period), 0);
+    return sum / subjects.length;
+  };
+
+  const getExamAvg = (studentId: string) => {
+    if (subjects.length === 0) return 0;
+    const sum = subjects.reduce((acc, subject) => acc + getSubjectExam(studentId, subject), 0);
+    return sum / subjects.length;
+  };
+
+  const getStudentMFDTotal = (studentId: string) => {
+    if (subjects.length === 0) return 0;
+    const sum = subjects.reduce((acc, subject) => acc + getSubjectMFD(studentId, subject), 0);
     return sum / subjects.length;
   };
 
@@ -10131,17 +10339,24 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
         row[`${subject} - MT1`] = m1.toFixed(1);
         row[`${subject} - MT2`] = m2.toFixed(1);
         row[`${subject} - MT3`] = m3.toFixed(1);
+        if (isExam) {
+          const ex = getSubjectExam(student.id, subject);
+          row[`${subject} - Exame`] = ex > 0 ? ex.toFixed(1) : '-';
+        }
         row[`${subject} - MFD`] = mfd.toFixed(1);
       });
       
       const mt1 = getTrimesterAvg(student.id, '1º Trimestre');
       const mt2 = getTrimesterAvg(student.id, '2º Trimestre');
       const mt3 = getTrimesterAvg(student.id, '3º Trimestre');
-      const mfdTotal = (mt1 + mt2 + mt3) / 3;
+      const mfdTotal = getStudentMFDTotal(student.id);
       
       row['Média Total MT1'] = mt1.toFixed(1);
       row['Média Total MT2'] = mt2.toFixed(1);
       row['Média Total MT3'] = mt3.toFixed(1);
+      if (isExam) {
+        row['Média Total Exame'] = getExamAvg(student.id).toFixed(1);
+      }
       row['Média Final (MFD)'] = mfdTotal.toFixed(1);
       row['Estado'] = getEstado(student, mfdTotal);
       
@@ -10177,10 +10392,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
           <button 
             onClick={() => {
               const aptos = classStudents.filter(s => {
-                const mt1 = getTrimesterAvg(s.id, '1º Trimestre');
-                const mt2 = getTrimesterAvg(s.id, '2º Trimestre');
-                const mt3 = getTrimesterAvg(s.id, '3º Trimestre');
-                const mfd = (mt1 + mt2 + mt3) / 3;
+                const mfd = getStudentMFDTotal(s.id);
                 return getEstado(s, mfd) === 'Apto';
               });
               if (aptos.length > 0) {
@@ -10248,9 +10460,9 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
               <tr className="bg-neutral-50/50 border-b border-neutral-100">
                 <th rowSpan={2} className="px-6 py-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest sticky left-0 bg-neutral-50/50 z-20 border-r border-neutral-100">Aluno</th>
                 {subjects.map((s, i) => (
-                  <th key={`${s}-${i}`} colSpan={4} className="px-4 py-3 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-r border-neutral-100">{s}</th>
+                  <th key={`${s}-${i}`} colSpan={isExam ? 5 : 4} className="px-4 py-3 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-r border-neutral-100">{s}</th>
                 ))}
-                <th colSpan={5} className="px-6 py-3 text-[10px] font-black text-emerald-700 uppercase tracking-widest text-center bg-emerald-50/50 border-b border-neutral-100">Resumo Final</th>
+                <th colSpan={isExam ? 6 : 5} className="px-6 py-3 text-[10px] font-black text-emerald-700 uppercase tracking-widest text-center bg-emerald-50/50 border-b border-neutral-100">Resumo Final</th>
                 <th rowSpan={2} className="px-6 py-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-neutral-100">Acção</th>
               </tr>
               <tr className="bg-neutral-50/30 border-b border-neutral-100">
@@ -10259,12 +10471,18 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                     <th className="px-2 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT1</th>
                     <th className="px-2 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT2</th>
                     <th className="px-2 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT3</th>
+                    {isExam && (
+                      <th className="px-2 py-3 text-[9px] font-black text-amber-700 text-center border-r border-neutral-100 bg-amber-50/50">Exame</th>
+                    )}
                     <th className="px-2 py-3 text-[9px] font-black text-neutral-900 text-center border-r border-neutral-100 bg-neutral-100/30">MFD</th>
                   </React.Fragment>
                 ))}
                 <th className="px-4 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT1</th>
                 <th className="px-4 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT2</th>
                 <th className="px-4 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT3</th>
+                {isExam && (
+                  <th className="px-4 py-3 text-[9px] font-black text-amber-700 text-center border-r border-neutral-100 bg-amber-50/50">Exame</th>
+                )}
                 <th className="px-4 py-3 text-[9px] font-black text-emerald-700 text-center border-r border-neutral-100 bg-emerald-100/20">MFD</th>
                 <th className="px-6 py-3 text-[9px] font-black text-neutral-900 text-center">Estado</th>
               </tr>
@@ -10274,8 +10492,10 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                 const mt1_global = getTrimesterAvg(student.id, '1º Trimestre');
                 const mt2_global = getTrimesterAvg(student.id, '2º Trimestre');
                 const mt3_global = getTrimesterAvg(student.id, '3º Trimestre');
-                const mfd_global = (mt1_global + mt2_global + mt3_global) / 3;
+                const exam_global = getExamAvg(student.id);
+                const mfd_global = getStudentMFDTotal(student.id);
                 const estado = getEstado(student, mfd_global);
+                const { threshold } = getGradeScale(selectedClass?.level || '');
 
                 return (
                   <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors group">
@@ -10286,37 +10506,52 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                       const s1 = getSubjectMT(student.id, subject, '1º Trimestre');
                       const s2 = getSubjectMT(student.id, subject, '2º Trimestre');
                       const s3 = getSubjectMT(student.id, subject, '3º Trimestre');
+                      const sexam = getSubjectExam(student.id, subject);
                       const smfd = calculateAnnual(student.id, subject, getGrade, selectedClass?.level);
                       return (
                         <React.Fragment key={`${student.id}-${subject}-${i}`}>
                           <td className="px-2 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                            <span className={s1 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{s1.toFixed(1)}</span>
+                            <span className={s1 >= threshold ? "text-neutral-900" : "text-rose-600"}>{s1.toFixed(1)}</span>
                           </td>
                           <td className="px-2 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                            <span className={s2 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{s2.toFixed(1)}</span>
+                            <span className={s2 >= threshold ? "text-neutral-900" : "text-rose-600"}>{s2.toFixed(1)}</span>
                           </td>
                           <td className="px-2 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                            <span className={s3 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{s3.toFixed(1)}</span>
+                            <span className={s3 >= threshold ? "text-neutral-900" : "text-rose-600"}>{s3.toFixed(1)}</span>
                           </td>
+                          {isExam && (
+                            <td className="px-2 py-4 text-center text-[10px] font-black bg-amber-50/30 border-r border-neutral-50">
+                              <span className={sexam >= threshold ? "text-amber-950 font-black" : "text-rose-600 font-black"}>
+                                {sexam > 0 ? sexam.toFixed(1) : '-'}
+                              </span>
+                            </td>
+                          )}
                           <td className="px-2 py-4 text-center text-[10px] font-black bg-neutral-50/30 border-r border-neutral-50">
-                            <span className={smfd >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{smfd.toFixed(1)}</span>
+                            <span className={smfd >= threshold ? "text-neutral-900" : "text-rose-600"}>{smfd.toFixed(1)}</span>
                           </td>
                         </React.Fragment>
                       );
                     })}
                     <td className="px-4 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                      <span className={mt1_global >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{mt1_global.toFixed(1)}</span>
+                      <span className={mt1_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{mt1_global.toFixed(1)}</span>
                     </td>
                     <td className="px-4 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                      <span className={mt2_global >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{mt2_global.toFixed(1)}</span>
+                      <span className={mt2_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{mt2_global.toFixed(1)}</span>
                     </td>
                     <td className="px-4 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                      <span className={mt3_global >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{mt3_global.toFixed(1)}</span>
+                      <span className={mt3_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{mt3_global.toFixed(1)}</span>
                     </td>
+                    {isExam && (
+                      <td className="px-4 py-4 text-center text-[10px] font-black bg-amber-50/30 border-r border-neutral-50">
+                        <span className={exam_global >= threshold ? "text-amber-950 font-black" : "text-rose-600 font-black"}>
+                          {exam_global > 0 ? exam_global.toFixed(1) : '-'}
+                        </span>
+                      </td>
+                    )}
                     <td className="px-4 py-4 text-center bg-emerald-50/20 border-r border-neutral-50">
                       <span className={cn(
                         "text-xs font-black",
-                        mfd_global >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"
+                        mfd_global >= threshold ? "text-neutral-900" : "text-rose-600"
                       )}>{mfd_global.toFixed(1)}</span>
                     </td>
                     <td className="px-6 py-4 text-center">

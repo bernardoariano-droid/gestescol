@@ -63,7 +63,7 @@ export type Grade = {
   studentId: string;
   subjectId: string;
   period: '1º Trimestre' | '2º Trimestre' | '3º Trimestre' | 'Exame';
-  type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3';
+  type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame';
   value: number;
   notaExame?: number;
   schoolId?: string;
@@ -164,4 +164,15 @@ export type AuditLog = {
   timestamp: string;
   details?: string;
 };
+
+export interface SchoolSettings {
+  republica: string;
+  governoProvincia: string;
+  administracaoMunicipal: string;
+  direccaoMunicipal: string;
+  nomeEscola: string;
+  anoLectivo: string;
+  insigniaUrl?: string;
+  carimboUrl?: string;
+}
 

@@ -180,6 +180,7 @@ export async function pullFromSupabase() {
         period: g.period,
         type: g.type,
         value: parseFloat(g.value),
+        notaExame: g.nota_exame !== null && g.nota_exame !== undefined ? parseFloat(g.nota_exame) : undefined,
         schoolId: g.school_id || 's1'
       })),
       payments: (pagamentosRes.data || []).map(p => ({
@@ -384,6 +385,7 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
             period: g.period,
             type: g.type,
             value: g.value,
+            nota_exame: g.notaExame !== undefined ? g.notaExame : (g.type === 'Exame' || g.period === 'Exame' ? g.value : null),
             school_id: cleanSchoolId(g.schoolId)
           }));
           const { error } = await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
@@ -688,6 +690,7 @@ export async function performFullBackup(data: {
         period: g.period,
         type: g.type,
         value: g.value,
+        nota_exame: g.notaExame !== undefined ? g.notaExame : (g.type === 'Exame' || g.period === 'Exame' ? g.value : null),
         school_id: cleanSchoolId(g.schoolId)
       }));
       const { error } = await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
