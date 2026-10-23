@@ -12170,6 +12170,7 @@ function TeacherPortalView({
                         const ac2 = getVal('AC2');
                         const ac3 = getVal('AC3');
                         const mac = getVal('MAC');
+          
                         const npt = getVal('NPT');
                         const exame = getVal('Exame');
                         const media = isExamClass(currentClass?.level) ? (mac + npt + exame) / 3 : (mac + npt) / 2;
