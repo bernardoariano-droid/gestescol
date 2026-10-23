@@ -424,13 +424,11 @@ export const generateUnifiedClassPautasPDF = (
       let repCount = 0;
       let desCount = 0;
 
-      const isExam = isExamClass(selectedClass.level);
-
       const rows = classStudents.map((student, idx) => {
         const mt1 = calculateMT(student.id, subject, '1º Trimestre', getGradeFunc, selectedClass.level);
         const mt2 = calculateMT(student.id, subject, '2º Trimestre', getGradeFunc, selectedClass.level);
         const mt3 = calculateMT(student.id, subject, '3º Trimestre', getGradeFunc, selectedClass.level);
-        const examGrade = isExam ? (getGradeFunc(student.id, subject, 'Exame', 'Exame') || getGradeFunc(student.id, subject, 'Exame', 'NPT') || 0) : 0;
+        const examGrade = getGradeFunc(student.id, subject, 'Exame', 'Exame') || getGradeFunc(student.id, subject, 'Exame', 'NPT') || 0;
         const mfd = calculateAnnual(student.id, subject, getGradeFunc, selectedClass.level);
 
         let res = 'Aprovado';
@@ -445,20 +443,6 @@ export const generateUnifiedClassPautasPDF = (
           repCount++;
         }
 
-        if (isExam) {
-          return [
-            (idx + 1).toString(),
-            student.bi || student.id.substring(0, 8).toUpperCase(),
-            student.name,
-            mt1.toFixed(1),
-            mt2.toFixed(1),
-            mt3.toFixed(1),
-            examGrade > 0 ? examGrade.toFixed(1) : '-',
-            mfd.toFixed(1),
-            res
-          ];
-        }
-
         return [
           (idx + 1).toString(),
           student.bi || student.id.substring(0, 8).toUpperCase(),
@@ -466,14 +450,13 @@ export const generateUnifiedClassPautasPDF = (
           mt1.toFixed(1),
           mt2.toFixed(1),
           mt3.toFixed(1),
+          examGrade > 0 ? examGrade.toFixed(1) : '-',
           mfd.toFixed(1),
           res
         ];
       });
 
-      const headCols = isExam 
-        ? ['Nº', 'Processo', 'Nome Completo do Estudante', '1º Trim (MT1)', '2º Trim (MT2)', '3º Trim (MT3)', 'Exame', 'Média Final (MFD)', 'Resultado']
-        : ['Nº', 'Processo', 'Nome Completo do Estudante', '1º Trim (MT1)', '2º Trim (MT2)', '3º Trim (MT3)', 'Média Final (MFD)', 'Resultado'];
+      const headCols = ['Nº', 'Processo', 'Nome Completo do Estudante', '1º Trim (MT1)', '2º Trim (MT2)', '3º Trim (MT3)', 'Nota de Exame', 'Média Final (MFD)', 'Resultado'];
 
       autoTable(doc, {
         startY: 45,
@@ -491,30 +474,20 @@ export const generateUnifiedClassPautasPDF = (
           fontSize: 8,
           textColor: [30, 41, 59]
         },
-        columnStyles: isExam ? {
+        columnStyles: {
           0: { halign: 'center', cellWidth: 10 },
-          1: { halign: 'center', cellWidth: 24 },
+          1: { halign: 'center', cellWidth: 26 },
           2: { halign: 'left' },
           3: { halign: 'center', cellWidth: 24 },
           4: { halign: 'center', cellWidth: 24 },
           5: { halign: 'center', cellWidth: 24 },
-          6: { halign: 'center', cellWidth: 22, fontStyle: 'bold' },
-          7: { halign: 'center', cellWidth: 26, fontStyle: 'bold' },
-          8: { halign: 'center', cellWidth: 24, fontStyle: 'bold' }
-        } : {
-          0: { halign: 'center', cellWidth: 12 },
-          1: { halign: 'center', cellWidth: 26 },
-          2: { halign: 'left' },
-          3: { halign: 'center', cellWidth: 28 },
-          4: { halign: 'center', cellWidth: 28 },
-          5: { halign: 'center', cellWidth: 28 },
-          6: { halign: 'center', cellWidth: 32, fontStyle: 'bold' },
-          7: { halign: 'center', cellWidth: 28, fontStyle: 'bold' }
+          6: { halign: 'center', cellWidth: 26, fontStyle: 'bold' },
+          7: { halign: 'center', cellWidth: 28, fontStyle: 'bold' },
+          8: { halign: 'center', cellWidth: 26, fontStyle: 'bold' }
         },
         didParseCell: (data) => {
           if (data.section === 'body') {
-            const lastNumCol = isExam ? 7 : 6;
-            if (data.column.index >= 3 && data.column.index <= lastNumCol) {
+            if (data.column.index >= 3 && data.column.index <= 7) {
               const val = parseFloat(data.cell.text[0]);
               if (!isNaN(val)) {
                 if (val < threshold) {
@@ -523,8 +496,7 @@ export const generateUnifiedClassPautasPDF = (
                 }
               }
             }
-            const resCol = isExam ? 8 : 7;
-            if (data.column.index === resCol) {
+            if (data.column.index === 8) {
               const text = data.cell.text[0];
               if (text === 'Aprovado') data.cell.styles.textColor = [22, 101, 52];
               else if (text === 'Reprovado') data.cell.styles.textColor = [225, 29, 72];
@@ -571,7 +543,7 @@ export const generateUnifiedClassPautasPDF = (
 
     // --- FINAL CONSOLIDATED PAUTA ---
     doc.addPage();
-    drawOfficialHeader(doc, "PAUTA GERAL CONSOLIDADA DA TURMA", "Matriz Global de Aproveitamento de Todas as Disciplinas");
+    drawOfficialHeader(doc, "PAUTA GERAL CONSOLIDADA DA TURMA", "Matriz Global de Todas as Disciplinas com Médias Trimestrais, Exame e MFD");
 
     const getTrimesterAvg = (studentId: string, period: string) => {
       if (subjects.length === 0) return 0;
@@ -579,14 +551,37 @@ export const generateUnifiedClassPautasPDF = (
       return sum / subjects.length;
     };
 
-    const headers = ['Nº', 'Nome do Aluno', ...subjects.map(s => s.length > 12 ? s.substring(0, 10) + '.' : s), 'Média Geral', 'Estado'];
+    const getExamAvg = (studentId: string) => {
+      if (subjects.length === 0) return 0;
+      const sum = subjects.reduce((acc, sub) => {
+        const ex = getGradeFunc(studentId, sub, 'Exame', 'Exame') || getGradeFunc(studentId, sub, 'Exame', 'NPT') || 0;
+        return acc + ex;
+      }, 0);
+      return sum / subjects.length;
+    };
+
+    const headers = [
+      'Nº', 
+      'Nome do Aluno', 
+      ...subjects.map(s => s.length > 10 ? s.substring(0, 8) + '.' : s), 
+      'MT1 Geral', 
+      'MT2 Geral', 
+      'MT3 Geral', 
+      'Nota Exame', 
+      'MFD Geral', 
+      'Estado'
+    ];
 
     const consolidatedRows = classStudents.map((student, idx) => {
       const subjectMFDs = subjects.map(sub => calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level));
       const mt1 = getTrimesterAvg(student.id, '1º Trimestre');
       const mt2 = getTrimesterAvg(student.id, '2º Trimestre');
       const mt3 = getTrimesterAvg(student.id, '3º Trimestre');
-      const mfdGlobal = (mt1 + mt2 + mt3) / 3;
+      const examAvg = getExamAvg(student.id);
+      
+      const mfdGlobal = subjects.length > 0 
+        ? subjectMFDs.reduce((a, b) => a + b, 0) / subjects.length 
+        : (mt1 + mt2 + mt3) / 3;
 
       let estadoStr = 'Apto';
       if (student.enrollmentStatus === 'Desistente') estadoStr = 'Desistente';
@@ -596,13 +591,17 @@ export const generateUnifiedClassPautasPDF = (
         (idx + 1).toString(),
         student.name,
         ...subjectMFDs.map(m => m.toFixed(1)),
+        mt1.toFixed(1),
+        mt2.toFixed(1),
+        mt3.toFixed(1),
+        examAvg > 0 ? examAvg.toFixed(1) : '-',
         mfdGlobal.toFixed(1),
         estadoStr
       ];
     });
 
     autoTable(doc, {
-      startY: 100,
+      startY: 48,
       head: [headers],
       body: consolidatedRows,
       theme: 'grid',
@@ -610,18 +609,22 @@ export const generateUnifiedClassPautasPDF = (
         fillColor: [6, 78, 59],
         textColor: [255, 255, 255],
         fontStyle: 'bold',
-        fontSize: 8,
+        fontSize: 7.5,
         halign: 'center'
       },
       bodyStyles: {
-        fontSize: 7.5,
+        fontSize: 7,
         textColor: [30, 41, 59]
       },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 10 },
-        1: { halign: 'left', cellWidth: 42 },
-        [headers.length - 2]: { halign: 'center', fontStyle: 'bold' },
-        [headers.length - 1]: { halign: 'center', fontStyle: 'bold' }
+        0: { halign: 'center', cellWidth: 8 },
+        1: { halign: 'left', cellWidth: 38 },
+        [headers.length - 6]: { halign: 'center', cellWidth: 16, fontStyle: 'bold' },
+        [headers.length - 5]: { halign: 'center', cellWidth: 16, fontStyle: 'bold' },
+        [headers.length - 4]: { halign: 'center', cellWidth: 16, fontStyle: 'bold' },
+        [headers.length - 3]: { halign: 'center', cellWidth: 18, fontStyle: 'bold' },
+        [headers.length - 2]: { halign: 'center', cellWidth: 18, fontStyle: 'bold' },
+        [headers.length - 1]: { halign: 'center', cellWidth: 18, fontStyle: 'bold' }
       },
       didParseCell: (data) => {
         if (data.section === 'body') {
@@ -6219,7 +6222,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
   students: Student[],
   grades: Grade[],
   onUpdateGrades: (newGrades: Grade[]) => void,
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => number,
   teachers: Teacher[],
   onUpdateTeachers?: (newTeachers: Teacher[]) => void,
   schoolSettings?: SchoolSettings,
@@ -6459,12 +6462,13 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
     let tableData: any[];
 
     if (activeTab === 'Anual') {
-      tableHeaders = ['Nº', 'Nome do Aluno', ...subjects.map(s => `${s.substring(0,3)}.`), 'MT1', 'MT2', 'MT3', 'MF', 'OBS'];
+      tableHeaders = ['Nº', 'Nome do Aluno', ...subjects.map(s => `${s.substring(0,3)}.`), 'MT1', 'MT2', 'MT3', 'EXAME', 'MFD', 'OBS'];
       tableData = classStudents.map((student, index) => {
         const mt1 = subjects.reduce((acc, sub) => acc + getMT(student.id, sub, '1º Trimestre'), 0) / (subjects.length || 1);
         const mt2 = subjects.reduce((acc, sub) => acc + getMT(student.id, sub, '2º Trimestre'), 0) / (subjects.length || 1);
         const mt3 = subjects.reduce((acc, sub) => acc + getMT(student.id, sub, '3º Trimestre'), 0) / (subjects.length || 1);
-        const mf = (mt1 + mt2 + mt3) / 3;
+        const exameAvg = subjects.reduce((acc, sub) => acc + (getGrade(student.id, sub, 'Exame', 'Exame') || getGrade(student.id, sub, 'Exame', 'NPT') || 0), 0) / (subjects.length || 1);
+        const mf = subjects.reduce((acc, sub) => acc + calculateAnnualMedia(student.id, sub), 0) / (subjects.length || 1);
         
         return [
           index + 1,
@@ -6473,6 +6477,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
           mt1.toFixed(1),
           mt2.toFixed(1),
           mt3.toFixed(1),
+          exameAvg > 0 ? exameAvg.toFixed(1) : '-',
           mf.toFixed(1),
           student.enrollmentStatus === 'Desistente' ? 'DESISTENTE' : mf >= getGradeScale(selectedClass.level).threshold ? 'APTO' : 'N/APTO'
         ];
