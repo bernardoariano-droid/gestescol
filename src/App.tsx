@@ -1898,12 +1898,9 @@ export default function App() {
         doc.setFontSize(16);
         doc.text('LISTA NOMINAL DE ALUNOS', centerX, 52, { align: 'center' });
         
-        doc.setFontSize(11);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Turma: ${cls.name}`, 15, 60);
-        doc.text(`Classe: ${cls.level}`, 90, 60);
-        doc.text(`Ano Lectivo: ${schoolSettings.anoLectivo}`, 165, 60);
-        doc.text(`Sala: ${cls.room || 'N/A'}`, 240, 60);
+        doc.setFontSize(10.5);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Turma: ${cls.name}   |   Classe: ${cls.level}   |   Ano Lectivo: ${schoolSettings.anoLectivo}   |   Sala: ${cls.room || 'N/A'}   |   Total Matriculados: ${classStudents.length} Alunos`, centerX, 60, { align: 'center' });
         
         startY = 65;
       } else if (paperSize === 'A5') {
@@ -1916,12 +1913,9 @@ export default function App() {
         doc.setFontSize(9.5);
         doc.text('LISTA NOMINAL DE ALUNOS', centerX, 34, { align: 'center' });
         
-        doc.setFontSize(7.5);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Turma: ${cls.name}`, 10, 40);
-        doc.text(`Classe: ${cls.level}`, 44, 40);
-        doc.text(`Ano Lectivo: ${schoolSettings.anoLectivo}`, 78, 40);
-        doc.text(`Sala: ${cls.room || 'N/A'}`, 112, 40);
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Turma: ${cls.name} | Classe: ${cls.level} | Total: ${classStudents.length} Alunos`, centerX, 40, { align: 'center' });
         
         startY = 44;
       } else {
@@ -1935,12 +1929,9 @@ export default function App() {
         doc.setFontSize(12);
         doc.text('LISTA NOMINAL DE ALUNOS', centerX, 45, { align: 'center' });
         
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Turma: ${cls.name}`, 15, 51);
-        doc.text(`Classe: ${cls.level}`, 65, 51);
-        doc.text(`Ano Lectivo: ${schoolSettings.anoLectivo}`, 115, 51);
-        doc.text(`Sala: ${cls.room || 'N/A'}`, 165, 51);
+        doc.setFontSize(8.5);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Turma: ${cls.name}   |   Classe: ${cls.level}   |   Ano Lectivo: ${schoolSettings.anoLectivo}   |   Sala: ${cls.room || 'N/A'}   |   Total Matriculados: ${classStudents.length} Alunos`, centerX, 51, { align: 'center' });
         
         startY = 55;
       }
@@ -1950,12 +1941,9 @@ export default function App() {
         doc.setFont('helvetica', 'bold');
         doc.text('LISTA NOMINAL DE ALUNOS', centerX, 20, { align: 'center' });
         
-        doc.setFontSize(11);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Turma: ${cls.name}`, 15, 30);
-        doc.text(`Classe: ${cls.level}`, 90, 30);
-        doc.text(`Ano Lectivo: ${schoolSettings.anoLectivo}`, 165, 30);
-        doc.text(`Sala: ${cls.room || 'N/A'}`, 240, 30);
+        doc.setFontSize(10.5);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Turma: ${cls.name}   |   Classe: ${cls.level}   |   Ano Lectivo: ${schoolSettings.anoLectivo}   |   Sala: ${cls.room || 'N/A'}   |   Total Matriculados: ${classStudents.length} Alunos`, centerX, 30, { align: 'center' });
         
         startY = 35;
       } else if (paperSize === 'A5') {
@@ -1963,12 +1951,9 @@ export default function App() {
         doc.setFont('helvetica', 'bold');
         doc.text('LISTA NOMINAL DE ALUNOS', centerX, 15, { align: 'center' });
         
-        doc.setFontSize(7.5);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Turma: ${cls.name}`, 10, 22);
-        doc.text(`Classe: ${cls.level}`, 44, 22);
-        doc.text(`Ano Lectivo: ${schoolSettings.anoLectivo}`, 78, 22);
-        doc.text(`Sala: ${cls.room || 'N/A'}`, 112, 22);
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Turma: ${cls.name} | Classe: ${cls.level} | Total: ${classStudents.length} Alunos`, centerX, 22, { align: 'center' });
         
         startY = 26;
       } else {
@@ -1977,12 +1962,9 @@ export default function App() {
         doc.setFont('helvetica', 'bold');
         doc.text('LISTA NOMINAL DE ALUNOS', centerX, 15, { align: 'center' });
         
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Turma: ${cls.name}`, 15, 23);
-        doc.text(`Classe: ${cls.level}`, 65, 23);
-        doc.text(`Ano Lectivo: ${schoolSettings.anoLectivo}`, 115, 23);
-        doc.text(`Sala: ${cls.room || 'N/A'}`, 165, 23);
+        doc.setFontSize(8.5);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Turma: ${cls.name}   |   Classe: ${cls.level}   |   Ano Lectivo: ${schoolSettings.anoLectivo}   |   Sala: ${cls.room || 'N/A'}   |   Total Matriculados: ${classStudents.length} Alunos`, centerX, 23, { align: 'center' });
         
         startY = 27;
       }
@@ -1990,27 +1972,14 @@ export default function App() {
 
     const tableHeaders = [['Nº', 'Nome Completo', 'Documento BI', 'Gênero', 'Estado']];
     
-    const listLength = Math.max(classStudents.length, 100);
-    const tableData = Array.from({ length: listLength }, (_, index) => {
-      const student = classStudents[index];
-      if (student) {
-        return [
-          index + 1,
-          student.name,
-          student.bi,
-          student.gender,
-          student.enrollmentStatus
-        ];
-      } else {
-        return [
-          index + 1,
-          '-',
-          '-',
-          '-',
-          '-'
-        ];
-      }
-    });
+    // Include all registered students without any limit or artificial padding
+    const tableData = classStudents.map((student, index) => [
+      index + 1,
+      student.name,
+      student.bi || '-',
+      student.gender || '-',
+      student.enrollmentStatus || 'Matriculado'
+    ]);
 
     let headSize = 8.5;
     let bodySize = 8.5;
@@ -2055,7 +2024,7 @@ export default function App() {
       head: tableHeaders,
       body: tableData,
       theme: 'grid',
-      headStyles: { fillColor: [15, 23, 42] }, // dark slate color matching the theme
+      headStyles: { fillColor: [15, 23, 42], fontSize: headSize, fontStyle: 'bold', halign: 'center' },
       styles: { fontSize: bodySize, cellPadding: cellPadding },
       columnStyles: columnStyles,
       margin: { left: margin, right: margin }
@@ -2114,6 +2083,16 @@ export default function App() {
       doc.setFontSize(sigDescFontSize);
       doc.text(sig.desc, colCenterX, descY, { align: 'center' });
     });
+
+    // Add page numbers and total count to all pages
+    const totalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(paperSize === 'A3' ? 9 : paperSize === 'A5' ? 6.5 : 7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Total de Alunos Matriculados: ${classStudents.length}   |   Página ${i} de ${totalPages}   |   ${schoolSettings.nomeEscola || 'EduGest Angola'}`, paperWidth / 2, pageHeight - (paperSize === 'A5' ? 4 : 6), { align: "center" });
+    }
 
     doc.save(`Lista_Alunos_${cls.name.replace(/ /g, '_')}_${paperSize}.pdf`);
   }
@@ -3705,9 +3684,6 @@ function ListsView({ classes, students, selectedClassId, onClassChange, setActiv
     XLSX.writeFile(wb, `Lista_${selectedClass.name}.xlsx`);
   };
 
-  const maxListStudents = classStudents.slice(0, 45);
-  const paddedStudents = Array.from({ length: 45 }, (_, i) => maxListStudents[i] || null);
-
   const config = {
     A3: {
       cardMaxW: "max-w-5xl",
@@ -3918,7 +3894,7 @@ function ListsView({ classes, students, selectedClassId, onClassChange, setActiv
             <div className="text-center space-y-3 print:space-y-1">
               <h2 className={cn("font-black text-neutral-900 tracking-tight uppercase", config.headerTitleSize)}>Lista Nominal de Alunos</h2>
               
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center max-w-3xl mx-auto border-t border-neutral-200 pt-3 mt-2 print:pt-1 print:gap-2 print:border-t">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 text-center max-w-4xl mx-auto border-t border-neutral-200 pt-3 mt-2 print:pt-1 print:gap-2 print:border-t">
                 <div>
                   <p className={cn("font-black text-neutral-400 uppercase tracking-wider", config.metaLabelSize)}>Turma</p>
                   <p className={cn("font-black text-neutral-800 uppercase", config.metaValueSize)}>{selectedClass.name}</p>
@@ -3934,6 +3910,10 @@ function ListsView({ classes, students, selectedClassId, onClassChange, setActiv
                 <div>
                   <p className={cn("font-black text-neutral-400 uppercase tracking-wider", config.metaLabelSize)}>Sala</p>
                   <p className={cn("font-black text-neutral-800 uppercase", config.metaValueSize)}>{selectedClass.room || 'N/A'}</p>
+                </div>
+                <div>
+                  <p className={cn("font-black text-emerald-600 uppercase tracking-wider", config.metaLabelSize)}>Total Matriculados</p>
+                  <p className={cn("font-black text-emerald-700 uppercase", config.metaValueSize)}>{classStudents.length} Alunos</p>
                 </div>
               </div>
             </div>
@@ -3954,69 +3934,59 @@ function ListsView({ classes, students, selectedClassId, onClassChange, setActiv
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100 print:divide-neutral-200">
-                  {paddedStudents.map((student, index) => {
-                    if (student) {
-                      return (
-                        <tr key={student.id} className="hover:bg-neutral-50 transition-colors border-b border-neutral-100 print:border-neutral-200">
-                          <td className={cn("font-black text-neutral-400", config.tableCellPadding, config.fontSize)}>{index + 1}</td>
-                          <td className={cn("font-bold text-neutral-900 uppercase tracking-tight", config.tableCellPadding, config.fontSize)}>{student.name}</td>
-                          <td className={cn("font-bold text-neutral-500 text-center sm:text-left", config.tableCellPadding, config.fontSize)}>{student.gender}</td>
-                          <td className={cn("font-bold text-neutral-500 text-center sm:text-left", config.tableCellPadding, config.fontSize)}>{calculateAge(student.birthDate)}</td>
-                          <td className={cn("font-mono font-bold text-neutral-400", config.tableCellPadding, config.fontSize)}>{student.bi}</td>
-                          <td className={config.tableCellPadding}>
-                            <span className={cn(
-                              "px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest print:border",
-                              student.enrollmentStatus === 'Confirmado' ? "bg-emerald-100 text-emerald-700 print:bg-transparent print:text-emerald-800 print:border-emerald-300" :
-                              student.enrollmentStatus === 'Matriculado' ? "bg-blue-100 text-blue-700 print:bg-transparent print:text-blue-800 print:border-blue-300" :
-                              student.enrollmentStatus === 'Pendente' ? "bg-amber-100 text-amber-700 print:bg-transparent print:text-amber-800 print:border-amber-300" :
-                              "bg-rose-100 text-rose-700 print:bg-transparent print:text-rose-800 print:border-rose-300",
-                              config.badgeSize
-                            )}>
-                              {student.enrollmentStatus}
-                            </span>
+                  {classStudents.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center py-12 text-sm font-bold text-neutral-400">
+                        Nenhum aluno registado nesta turma.
+                      </td>
+                    </tr>
+                  ) : (
+                    classStudents.map((student, index) => (
+                      <tr key={student.id} className="hover:bg-neutral-50 transition-colors border-b border-neutral-100 print:border-neutral-200">
+                        <td className={cn("font-black text-neutral-400", config.tableCellPadding, config.fontSize)}>{index + 1}</td>
+                        <td className={cn("font-bold text-neutral-900 uppercase tracking-tight", config.tableCellPadding, config.fontSize)}>{student.name}</td>
+                        <td className={cn("font-bold text-neutral-500 text-center sm:text-left", config.tableCellPadding, config.fontSize)}>{student.gender}</td>
+                        <td className={cn("font-bold text-neutral-500 text-center sm:text-left", config.tableCellPadding, config.fontSize)}>{calculateAge(student.birthDate)}</td>
+                        <td className={cn("font-mono font-bold text-neutral-400", config.tableCellPadding, config.fontSize)}>{student.bi || '-'}</td>
+                        <td className={config.tableCellPadding}>
+                          <span className={cn(
+                            "px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest print:border",
+                            student.enrollmentStatus === 'Confirmado' ? "bg-emerald-100 text-emerald-700 print:bg-transparent print:text-emerald-800 print:border-emerald-300" :
+                            student.enrollmentStatus === 'Matriculado' ? "bg-blue-100 text-blue-700 print:bg-transparent print:text-blue-800 print:border-blue-300" :
+                            student.enrollmentStatus === 'Pendente' ? "bg-amber-100 text-amber-700 print:bg-transparent print:text-amber-800 print:border-amber-300" :
+                            "bg-rose-100 text-rose-700 print:bg-transparent print:text-rose-800 print:border-rose-300",
+                            config.badgeSize
+                          )}>
+                            {student.enrollmentStatus}
+                          </span>
+                        </td>
+                        {(onEditStudent || onDeleteStudent) && (
+                          <td className="px-4 py-3 sm:py-4 print:hidden">
+                            <div className="flex gap-2">
+                              {onEditStudent && (
+                                <button 
+                                  onClick={() => onEditStudent(student)}
+                                  className="p-2 bg-neutral-100 text-neutral-600 hover:bg-blue-600 hover:text-white rounded-xl transition-all active:scale-95 shadow-sm"
+                                  title="Editar Aluno"
+                                >
+                                  <Edit size={14} />
+                                </button>
+                              )}
+                              {onDeleteStudent && (
+                                <button 
+                                  onClick={() => onDeleteStudent(student.id)}
+                                  className="p-2 bg-neutral-100 text-neutral-600 hover:bg-rose-600 hover:text-white rounded-xl transition-all active:scale-95 shadow-sm"
+                                  title="Eliminar Aluno"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
+                            </div>
                           </td>
-                          {(onEditStudent || onDeleteStudent) && (
-                            <td className="px-4 py-3 sm:py-4 print:hidden">
-                              <div className="flex gap-2">
-                                {onEditStudent && (
-                                  <button 
-                                    onClick={() => onEditStudent(student)}
-                                    className="p-2 bg-neutral-100 text-neutral-600 hover:bg-blue-600 hover:text-white rounded-xl transition-all active:scale-95 shadow-sm"
-                                    title="Editar Aluno"
-                                  >
-                                    <Edit size={14} />
-                                  </button>
-                                )}
-                                {onDeleteStudent && (
-                                  <button 
-                                    onClick={() => onDeleteStudent(student.id)}
-                                    className="p-2 bg-neutral-100 text-neutral-600 hover:bg-rose-600 hover:text-white rounded-xl transition-all active:scale-95 shadow-sm"
-                                    title="Eliminar Aluno"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    } else {
-                      return (
-                        <tr key={`empty-${index}`} className="border-b border-neutral-100 print:border-neutral-200">
-                          <td className={cn("font-black text-neutral-300", config.tableCellPadding, config.fontSize)}>{index + 1}</td>
-                          <td className={cn("text-neutral-300", config.tableCellPadding, config.fontSize)}>-</td>
-                          <td className={cn("text-neutral-300 text-center sm:text-left", config.tableCellPadding, config.fontSize)}>-</td>
-                          <td className={cn("text-neutral-300 text-center sm:text-left", config.tableCellPadding, config.fontSize)}>-</td>
-                          <td className={cn("text-neutral-300", config.tableCellPadding, config.fontSize)}>-</td>
-                          <td className={cn("text-neutral-300", config.tableCellPadding, config.fontSize)}>-</td>
-                          {(onEditStudent || onDeleteStudent) && (
-                            <td className="px-4 py-3 sm:py-4 print:hidden"></td>
-                          )}
-                        </tr>
-                      );
-                    }
-                  })}
+                        )}
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
