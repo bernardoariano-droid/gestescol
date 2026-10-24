@@ -543,7 +543,7 @@ export const generateUnifiedClassPautasPDF = (
 
     // --- FINAL CONSOLIDATED PAUTA ---
     doc.addPage();
-    drawOfficialHeader(doc, "PAUTA GERAL CONSOLIDADA DA TURMA", "Matriz Global de Todas as Disciplinas com Médias Trimestrais, Exame e MFD");
+    drawOfficialHeader(doc, "PAUTA GERAL CONSOLIDADA DA TURMA", isExamClass(selectedClass.level) ? "Matriz Global com MT1, MT2, MT3, Nota de Exame e MFD por Disciplina" : "Matriz Global com MT1, MT2, MT3 e MFD por Disciplina");
 
     const getTrimesterAvg = (studentId: string, period: string) => {
       if (subjects.length === 0) return 0;
@@ -560,82 +560,127 @@ export const generateUnifiedClassPautasPDF = (
       return sum / subjects.length;
     };
 
-    const headers = [
-      'Nº', 
-      'Nome do Aluno', 
-      ...subjects.map(s => s.length > 10 ? s.substring(0, 8) + '.' : s), 
-      'MT1 Geral', 
-      'MT2 Geral', 
-      'MT3 Geral', 
-      'Nota Exame', 
-      'MFD Geral', 
-      'Estado'
+    const isExamConsolidated = isExamClass(selectedClass.level);
+    const totalCols = 2 + (subjects.length * (isExamConsolidated ? 5 : 4)) + (isExamConsolidated ? 6 : 5);
+    const tblFontSize = totalCols > 45 ? 5.0 : totalCols > 32 ? 5.5 : 6.5;
+    const tblPadding = totalCols > 45 ? 0.3 : totalCols > 32 ? 0.4 : 0.6;
+    const studentNameWidth = totalCols > 45 ? 26 : totalCols > 32 ? 32 : 38;
+
+    // Header Row 1: Subject Names as grouped headers
+    const headRow1: any[] = [
+      { content: 'Nº', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontStyle: 'bold' } },
+      { content: 'Nome Completo do Aluno', rowSpan: 2, styles: { halign: 'left', valign: 'middle', fontStyle: 'bold' } },
+      ...subjects.map(s => ({
+        content: s.toUpperCase(),
+        colSpan: isExamConsolidated ? 5 : 4,
+        styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [30, 41, 59], textColor: [255, 255, 255] }
+      })),
+      {
+        content: 'RESUMO GERAL',
+        colSpan: isExamConsolidated ? 6 : 5,
+        styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [6, 78, 59], textColor: [255, 255, 255] }
+      }
+    ];
+
+    // Header Row 2: Under each subject: MT1, MT2, MT3, (Exame se 6ª/9ª/12ª), MFD
+    const headRow2: any[] = [
+      ...subjects.flatMap(() => [
+        { content: 'MT1', styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: 'MT2', styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: 'MT3', styles: { halign: 'center', fontStyle: 'bold' } },
+        ...(isExamConsolidated ? [{ content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }] : []),
+        { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [15, 23, 42] } }
+      ]),
+      // Under Resumo Geral:
+      { content: 'MT1', styles: { halign: 'center', fontStyle: 'bold' } },
+      { content: 'MT2', styles: { halign: 'center', fontStyle: 'bold' } },
+      { content: 'MT3', styles: { halign: 'center', fontStyle: 'bold' } },
+      ...(isExamConsolidated ? [{ content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }] : []),
+      { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [209, 250, 229], textColor: [6, 78, 59] } },
+      { content: 'Estado', styles: { halign: 'center', fontStyle: 'bold' } }
     ];
 
     const consolidatedRows = classStudents.map((student, idx) => {
-      const subjectMFDs = subjects.map(sub => calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level));
-      const mt1 = getTrimesterAvg(student.id, '1º Trimestre');
-      const mt2 = getTrimesterAvg(student.id, '2º Trimestre');
-      const mt3 = getTrimesterAvg(student.id, '3º Trimestre');
-      const examAvg = getExamAvg(student.id);
-      
+      const row: any[] = [
+        (idx + 1).toString(),
+        student.name
+      ];
+
+      // Values for each subject
+      subjects.forEach(sub => {
+        const mt1 = calculateMT(student.id, sub, '1º Trimestre', getGradeFunc, selectedClass.level);
+        const mt2 = calculateMT(student.id, sub, '2º Trimestre', getGradeFunc, selectedClass.level);
+        const mt3 = calculateMT(student.id, sub, '3º Trimestre', getGradeFunc, selectedClass.level);
+        const mfd = calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level);
+
+        row.push(mt1.toFixed(1));
+        row.push(mt2.toFixed(1));
+        row.push(mt3.toFixed(1));
+        if (isExamConsolidated) {
+          const examGrade = getGradeFunc(student.id, sub, 'Exame', 'Exame') || getGradeFunc(student.id, sub, 'Exame', 'NPT') || 0;
+          row.push(examGrade > 0 ? examGrade.toFixed(1) : '-');
+        }
+        row.push(mfd.toFixed(1));
+      });
+
+      // Values for Resumo Geral
+      const mt1Global = getTrimesterAvg(student.id, '1º Trimestre');
+      const mt2Global = getTrimesterAvg(student.id, '2º Trimestre');
+      const mt3Global = getTrimesterAvg(student.id, '3º Trimestre');
       const mfdGlobal = subjects.length > 0 
-        ? subjectMFDs.reduce((a, b) => a + b, 0) / subjects.length 
-        : (mt1 + mt2 + mt3) / 3;
+        ? subjects.reduce((acc, sub) => acc + calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level), 0) / subjects.length 
+        : (mt1Global + mt2Global + mt3Global) / 3;
+
+      row.push(mt1Global.toFixed(1));
+      row.push(mt2Global.toFixed(1));
+      row.push(mt3Global.toFixed(1));
+      if (isExamConsolidated) {
+        const examGlobal = getExamAvg(student.id);
+        row.push(examGlobal > 0 ? examGlobal.toFixed(1) : '-');
+      }
+      row.push(mfdGlobal.toFixed(1));
 
       let estadoStr = 'Apto';
       if (student.enrollmentStatus === 'Desistente') estadoStr = 'Desistente';
       else if (mfdGlobal < threshold) estadoStr = 'N/Apto';
 
-      return [
-        (idx + 1).toString(),
-        student.name,
-        ...subjectMFDs.map(m => m.toFixed(1)),
-        mt1.toFixed(1),
-        mt2.toFixed(1),
-        mt3.toFixed(1),
-        examAvg > 0 ? examAvg.toFixed(1) : '-',
-        mfdGlobal.toFixed(1),
-        estadoStr
-      ];
+      row.push(estadoStr);
+      return row;
     });
 
     autoTable(doc, {
-      startY: 48,
-      head: [headers],
+      startY: 44,
+      head: [headRow1, headRow2],
       body: consolidatedRows,
       theme: 'grid',
       headStyles: {
-        fillColor: [6, 78, 59],
+        fillColor: [15, 23, 42],
         textColor: [255, 255, 255],
         fontStyle: 'bold',
-        fontSize: 7.5,
-        halign: 'center'
+        fontSize: tblFontSize,
+        halign: 'center',
+        valign: 'middle'
       },
-      bodyStyles: {
-        fontSize: 7,
+      styles: {
+        fontSize: tblFontSize,
+        cellPadding: tblPadding,
+        halign: 'center',
         textColor: [30, 41, 59]
       },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 8 },
-        1: { halign: 'left', cellWidth: 38 },
-        [headers.length - 6]: { halign: 'center', cellWidth: 16, fontStyle: 'bold' },
-        [headers.length - 5]: { halign: 'center', cellWidth: 16, fontStyle: 'bold' },
-        [headers.length - 4]: { halign: 'center', cellWidth: 16, fontStyle: 'bold' },
-        [headers.length - 3]: { halign: 'center', cellWidth: 18, fontStyle: 'bold' },
-        [headers.length - 2]: { halign: 'center', cellWidth: 18, fontStyle: 'bold' },
-        [headers.length - 1]: { halign: 'center', cellWidth: 18, fontStyle: 'bold' }
+        0: { halign: 'center', cellWidth: 7 },
+        1: { halign: 'left', cellWidth: studentNameWidth }
       },
       didParseCell: (data) => {
         if (data.section === 'body') {
-          if (data.column.index >= 2 && data.column.index < headers.length - 1) {
+          if (data.column.index >= 2 && data.column.index < totalCols - 1) {
             const val = parseFloat(data.cell.text[0]);
             if (!isNaN(val) && val < threshold) {
               data.cell.styles.textColor = [225, 29, 72];
               data.cell.styles.fontStyle = 'bold';
             }
           }
-          if (data.column.index === headers.length - 1) {
+          if (data.column.index === totalCols - 1) {
             const st = data.cell.text[0];
             if (st === 'Apto') data.cell.styles.textColor = [22, 101, 52];
             else if (st === 'N/Apto') data.cell.styles.textColor = [225, 29, 72];
@@ -643,11 +688,16 @@ export const generateUnifiedClassPautasPDF = (
           }
         }
       },
-      margin: { left: 14, right: 14 }
+      margin: { left: 8, right: 8 }
     });
 
     let cFinalY = (doc as any).lastAutoTable?.finalY || 130;
-    cFinalY = Math.max(cFinalY + 12, pageHeight - 35);
+    if (cFinalY > pageHeight - 35) {
+      doc.addPage();
+      cFinalY = 20;
+    } else {
+      cFinalY = Math.max(cFinalY + 8, pageHeight - 35);
+    }
 
     doc.setFontSize(8);
     doc.setFont("Helvetica", "bold");
@@ -677,6 +727,255 @@ export const generateUnifiedClassPautasPDF = (
   } catch (err) {
     console.error("Erro ao gerar PDF unificado:", err);
     notify('Erro ao gerar o ficheiro PDF das pautas.', 'error');
+  }
+};
+
+export const generateConsolidatedPautaPDF = (
+  selectedClass: Class,
+  classStudents: Student[],
+  getGradeFunc: (sId: string, subId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => number,
+  schoolSettings: SchoolSettings,
+  showToast?: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void
+) => {
+  const notify = showToast || ((msg: string) => alert(msg));
+  if (!selectedClass) {
+    notify('Nenhuma turma selecionada.', 'error');
+    return;
+  }
+  if (!classStudents || classStudents.length === 0) {
+    notify('A turma selecionada não possui estudantes registados.', 'warning');
+    return;
+  }
+
+  const subjects = getSubjectsForClass(selectedClass);
+  if (subjects.length === 0) {
+    notify('Nenhuma disciplina encontrada para esta turma.', 'warning');
+    return;
+  }
+
+  try {
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const { threshold } = getGradeScale(selectedClass.level || '');
+    const isExam = isExamClass(selectedClass.level);
+
+    // Official Angolan Header
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(50, 50, 50);
+    doc.text("REPÚBLICA DE ANGOLA", pageWidth / 2, 11, { align: "center" });
+    doc.text("GOVERNO PROVINCIAL - MINISTÉRIO DA EDUCAÇÃO", pageWidth / 2, 15, { align: "center" });
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text((schoolSettings.nomeEscola || "INSTITUIÇÃO DE ENSINO").toUpperCase(), pageWidth / 2, 20, { align: "center" });
+
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.4);
+    doc.line(8, 23, pageWidth - 8, 23);
+
+    doc.setFontSize(11.5);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(30, 58, 138);
+    doc.text("PAUTA GERAL CONSOLIDADA DE APROVEITAMENTO", pageWidth / 2, 29, { align: "center" });
+
+    doc.setFontSize(8);
+    doc.setFont("Helvetica", "normal");
+    doc.setTextColor(71, 85, 105);
+    doc.text(isExam ? "Matriz Oficial com MT1, MT2, MT3, Nota de Exame e MFD por Disciplina" : "Matriz Oficial com MT1, MT2, MT3 e MFD por Disciplina", pageWidth / 2, 33.5, { align: "center" });
+
+    doc.setFontSize(8);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(30, 41, 59);
+    doc.text(`TURMA: ${selectedClass.name}   |   NÍVEL: ${selectedClass.level}   |   CURSO: ${selectedClass.course || 'Geral'}   |   ANO LECTIVO: ${schoolSettings.anoLectivo}`, 8, 38.5);
+    doc.text(`DATA DE EMISSÃO: ${new Date().toLocaleDateString('pt-PT')}`, pageWidth - 8, 38.5, { align: "right" });
+
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.2);
+    doc.line(8, 40.5, pageWidth - 8, 40.5);
+
+    const getTrimesterAvg = (studentId: string, period: string) => {
+      if (subjects.length === 0) return 0;
+      const sum = subjects.reduce((acc, sub) => acc + calculateMT(studentId, sub, period, getGradeFunc, selectedClass.level), 0);
+      return sum / subjects.length;
+    };
+
+    const getExamAvg = (studentId: string) => {
+      if (subjects.length === 0) return 0;
+      const sum = subjects.reduce((acc, sub) => {
+        const ex = getGradeFunc(studentId, sub, 'Exame', 'Exame') || getGradeFunc(studentId, sub, 'Exame', 'NPT') || 0;
+        return acc + ex;
+      }, 0);
+      return sum / subjects.length;
+    };
+
+    const totalCols = 2 + (subjects.length * (isExam ? 5 : 4)) + (isExam ? 6 : 5);
+    const tblFontSize = totalCols > 45 ? 5.0 : totalCols > 32 ? 5.5 : 6.5;
+    const tblPadding = totalCols > 45 ? 0.3 : totalCols > 32 ? 0.4 : 0.6;
+    const studentNameWidth = totalCols > 45 ? 26 : totalCols > 32 ? 32 : 38;
+
+    const headRow1: any[] = [
+      { content: 'Nº', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontStyle: 'bold' } },
+      { content: 'Nome Completo do Aluno', rowSpan: 2, styles: { halign: 'left', valign: 'middle', fontStyle: 'bold' } },
+      ...subjects.map(s => ({
+        content: s.toUpperCase(),
+        colSpan: isExam ? 5 : 4,
+        styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [30, 41, 59], textColor: [255, 255, 255] }
+      })),
+      {
+        content: 'RESUMO GERAL',
+        colSpan: isExam ? 6 : 5,
+        styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [6, 78, 59], textColor: [255, 255, 255] }
+      }
+    ];
+
+    const headRow2: any[] = [
+      ...subjects.flatMap(() => [
+        { content: 'MT1', styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: 'MT2', styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: 'MT3', styles: { halign: 'center', fontStyle: 'bold' } },
+        ...(isExam ? [{ content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }] : []),
+        { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [15, 23, 42] } }
+      ]),
+      { content: 'MT1', styles: { halign: 'center', fontStyle: 'bold' } },
+      { content: 'MT2', styles: { halign: 'center', fontStyle: 'bold' } },
+      { content: 'MT3', styles: { halign: 'center', fontStyle: 'bold' } },
+      ...(isExam ? [{ content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }] : []),
+      { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [209, 250, 229], textColor: [6, 78, 59] } },
+      { content: 'Estado', styles: { halign: 'center', fontStyle: 'bold' } }
+    ];
+
+    const consolidatedRows = classStudents.map((student, idx) => {
+      const row: any[] = [
+        (idx + 1).toString(),
+        student.name
+      ];
+
+      subjects.forEach(sub => {
+        const mt1 = calculateMT(student.id, sub, '1º Trimestre', getGradeFunc, selectedClass.level);
+        const mt2 = calculateMT(student.id, sub, '2º Trimestre', getGradeFunc, selectedClass.level);
+        const mt3 = calculateMT(student.id, sub, '3º Trimestre', getGradeFunc, selectedClass.level);
+        const mfd = calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level);
+
+        row.push(mt1.toFixed(1));
+        row.push(mt2.toFixed(1));
+        row.push(mt3.toFixed(1));
+        if (isExam) {
+          const examGrade = getGradeFunc(student.id, sub, 'Exame', 'Exame') || getGradeFunc(student.id, sub, 'Exame', 'NPT') || 0;
+          row.push(examGrade > 0 ? examGrade.toFixed(1) : '-');
+        }
+        row.push(mfd.toFixed(1));
+      });
+
+      const mt1Global = getTrimesterAvg(student.id, '1º Trimestre');
+      const mt2Global = getTrimesterAvg(student.id, '2º Trimestre');
+      const mt3Global = getTrimesterAvg(student.id, '3º Trimestre');
+      const mfdGlobal = subjects.length > 0 
+        ? subjects.reduce((acc, sub) => acc + calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level), 0) / subjects.length 
+        : (mt1Global + mt2Global + mt3Global) / 3;
+
+      row.push(mt1Global.toFixed(1));
+      row.push(mt2Global.toFixed(1));
+      row.push(mt3Global.toFixed(1));
+      if (isExam) {
+        const examGlobal = getExamAvg(student.id);
+        row.push(examGlobal > 0 ? examGlobal.toFixed(1) : '-');
+      }
+      row.push(mfdGlobal.toFixed(1));
+
+      let estadoStr = 'Apto';
+      if (student.enrollmentStatus === 'Desistente') estadoStr = 'Desistente';
+      else if (mfdGlobal < threshold) estadoStr = 'N/Apto';
+
+      row.push(estadoStr);
+      return row;
+    });
+
+    autoTable(doc, {
+      startY: 44,
+      head: [headRow1, headRow2],
+      body: consolidatedRows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: tblFontSize,
+        halign: 'center',
+        valign: 'middle'
+      },
+      styles: {
+        fontSize: tblFontSize,
+        cellPadding: tblPadding,
+        halign: 'center',
+        textColor: [30, 41, 59]
+      },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 7 },
+        1: { halign: 'left', cellWidth: studentNameWidth }
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body') {
+          if (data.column.index >= 2 && data.column.index < totalCols - 1) {
+            const val = parseFloat(data.cell.text[0]);
+            if (!isNaN(val) && val < threshold) {
+              data.cell.styles.textColor = [225, 29, 72];
+              data.cell.styles.fontStyle = 'bold';
+            }
+          }
+          if (data.column.index === totalCols - 1) {
+            const st = data.cell.text[0];
+            if (st === 'Apto') data.cell.styles.textColor = [22, 101, 52];
+            else if (st === 'N/Apto') data.cell.styles.textColor = [225, 29, 72];
+            else data.cell.styles.textColor = [100, 116, 139];
+          }
+        }
+      },
+      margin: { left: 8, right: 8 }
+    });
+
+    let cFinalY = (doc as any).lastAutoTable?.finalY || 130;
+    if (cFinalY > pageHeight - 35) {
+      doc.addPage();
+      cFinalY = 20;
+    } else {
+      cFinalY = Math.max(cFinalY + 8, pageHeight - 35);
+    }
+
+    const sigWidth = (pageWidth - 16) / 3;
+    doc.setFontSize(8);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(51, 65, 85);
+    
+    doc.text("O Director de Turma", 8 + sigWidth / 2, cFinalY, { align: "center" });
+    doc.setDrawColor(148, 163, 184);
+    doc.line(8 + 10, cFinalY + 10, 8 + sigWidth - 10, cFinalY + 10);
+
+    doc.text("O Subdirector Pedagógico", 8 + sigWidth + sigWidth / 2, cFinalY, { align: "center" });
+    doc.line(8 + sigWidth + 10, cFinalY + 10, 8 + sigWidth * 2 - 10, cFinalY + 10);
+
+    doc.text("O Director Geral da Escola", 8 + sigWidth * 2 + sigWidth / 2, cFinalY, { align: "center" });
+    doc.line(8 + sigWidth * 2 + 10, cFinalY + 10, pageWidth - 8 - 10, cFinalY + 10);
+
+    const totalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setFont("Helvetica", "normal");
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Página ${i} de ${totalPages}   |   Pauta Geral Consolidada Oficial   |   ${schoolSettings.nomeEscola || 'EduGest Angola'}`, pageWidth / 2, pageHeight - 4, { align: "center" });
+    }
+
+    doc.save(`Pauta_Consolidada_Turma_${selectedClass.name.replace(/ /g, '_')}_${schoolSettings.anoLectivo}.pdf`);
+    notify('Pauta Consolidada em PDF gerada com sucesso!', 'success');
+  } catch (err) {
+    console.error("Erro ao gerar Pauta Consolidada:", err);
+    notify('Erro ao gerar o ficheiro PDF da pauta consolidada.', 'error');
   }
 };
 
@@ -10420,6 +10719,18 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
           >
             <Award size={20} />
             Emitir Certificados (Aptos)
+          </button>
+          <button 
+            onClick={() => {
+              if (selectedClass) {
+                generateConsolidatedPautaPDF(selectedClass, classStudents, getGrade, schoolSettings, showToast);
+              }
+            }}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3.5 rounded-2xl font-black flex items-center justify-center gap-2.5 transition-all active:scale-95 shadow-md shadow-emerald-200"
+            title="Exportar Pauta Geral Consolidada em PDF (Matriz com MT1, MT2, MT3, Nota de Exame e MFD por Disciplina)"
+          >
+            <FileDown size={20} />
+            Pauta Consolidada (PDF)
           </button>
           <button 
             onClick={() => {
