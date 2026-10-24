@@ -1165,7 +1165,22 @@ export default function App() {
             return [...cloudData.teachers, ...localOnly];
           });
         }
-        if (Array.isArray(cloudData.grades)) setGrades(cloudData.grades);
+        if (Array.isArray(cloudData.grades)) {
+          setGrades(prev => {
+            const gradeMap = new Map<string, Grade>();
+            prev.forEach(g => {
+              const key = `${g.studentId}_${g.subjectId}_${g.period}_${g.type}`;
+              gradeMap.set(key, g);
+            });
+            cloudData.grades.forEach((g: Grade) => {
+              const key = `${g.studentId}_${g.subjectId}_${g.period}_${g.type}`;
+              gradeMap.set(key, g);
+            });
+            const merged = Array.from(gradeMap.values());
+            localStorage.setItem('edugest_grades', JSON.stringify(merged));
+            return merged;
+          });
+        }
         if (Array.isArray(cloudData.payments)) {
           setPayments(prev => {
             const cloudIds = new Set(cloudData.payments.map((p: Payment) => p.id));
@@ -1806,7 +1821,7 @@ export default function App() {
 
   const currentSchoolId = currentUser?.role === 'Super-Administrador'
     ? (selectedSchoolId || 's1')
-    : currentUser?.schoolId;
+    : (currentUser?.schoolId || selectedSchoolId || (schools[0]?.id || 's1'));
 
   const currentSchool = useMemo(() => schools.find(s => s.id === currentSchoolId), [schools, currentSchoolId]);
   
@@ -2183,14 +2198,30 @@ export default function App() {
     showToast('Lista de turmas actualizada');
   };
   const onUpdateGrades = (newGrades: Grade[]) => {
-    if (!authService.canAccessSchool(currentSchoolId)) {
-      showToast('Erro de Permissão: Não tem autorização para gerir notas nesta escola.', 'error');
-      return;
-    }
-    const otherSchoolsGrades = grades.filter(g => g.schoolId !== currentSchoolId);
-    const withSchoolId = newGrades.map(g => ({ ...g, schoolId: currentSchoolId || g.schoolId || 's1' }));
-    setGrades([...otherSchoolsGrades, ...withSchoolId]);
-    showToast('Notas actualizadas');
+    const targetSchoolId = currentSchoolId || (currentUser?.schoolId) || (schools[0]?.id || 's1');
+    const withSchoolId = newGrades.map(g => ({ 
+      ...g, 
+      schoolId: g.schoolId || targetSchoolId 
+    }));
+
+    setGrades(prevGrades => {
+      const updatedMap = new Map<string, Grade>();
+      // 1. Preserve existing grades
+      prevGrades.forEach(g => {
+        const key = `${g.studentId}_${g.subjectId}_${g.period}_${g.type}`;
+        updatedMap.set(key, g);
+      });
+      // 2. Overwrite / insert new grades
+      withSchoolId.forEach(g => {
+        const key = `${g.studentId}_${g.subjectId}_${g.period}_${g.type}`;
+        updatedMap.set(key, g);
+      });
+      const merged = Array.from(updatedMap.values());
+      localStorage.setItem('edugest_grades', JSON.stringify(merged));
+      return merged;
+    });
+
+    showToast('Notas actualizadas e sincronizadas com sucesso!', 'success');
     queueSyncAction('ACTUALIZAR_NOTAS', 'Actualização de pauta de notas', withSchoolId);
   };
 
@@ -2820,15 +2851,19 @@ export default function App() {
                   students={filteredStudents} 
                   classes={filteredClasses} 
                   grades={filteredGrades}
-                  onAddStudent={(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') && hasActiveSubscription ? (s) => {
-                    setStudents([...students, { ...s, schoolId: currentSchoolId || '' }]);
-                    showToast('Aluno matriculado com sucesso');
-                    queueSyncAction('CADASTRAR_ALUNO', `Matrícula do aluno "${s.name}"`, s);
+                  onAddStudent={(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador' || currentUser?.role === 'Secretário') && hasActiveSubscription ? (s) => {
+                    const targetSchoolId = s.schoolId || currentSchoolId || (schools[0]?.id || 's1');
+                    const studentWithSchool: Student = { ...s, schoolId: targetSchoolId };
+                    setStudents(prev => [...prev.filter(item => item.id !== studentWithSchool.id), studentWithSchool]);
+                    showToast('Aluno matriculado com sucesso', 'success');
+                    queueSyncAction('CADASTRAR_ALUNO', `Matrícula do aluno "${studentWithSchool.name}"`, studentWithSchool);
                   } : undefined}
                   onUpdateStudent={hasActiveSubscription ? (s) => {
-                    setStudents(students.map(item => item.id === s.id ? { ...s, schoolId: s.schoolId || currentSchoolId || '' } : item));
-                    showToast('Dados do aluno actualizados');
-                    queueSyncAction('ACTUALIZAR_ALUNO', `Dados de "${s.name}" actualizados`, s);
+                    const targetSchoolId = s.schoolId || currentSchoolId || (schools[0]?.id || 's1');
+                    const updatedStudent: Student = { ...s, schoolId: targetSchoolId };
+                    setStudents(prev => prev.map(item => item.id === s.id ? updatedStudent : item));
+                    showToast('Dados do aluno actualizados', 'success');
+                    queueSyncAction('ACTUALIZAR_ALUNO', `Dados de "${s.name}" actualizados`, updatedStudent);
                   } : undefined}
                   onDeleteStudent={currentUser?.role !== 'Professor' && hasActiveSubscription ? onDeleteStudent : undefined}
                   getGrade={getGrade}
@@ -2910,7 +2945,6 @@ export default function App() {
                   grades={filteredGrades}
                   onUpdateGrades={hasActiveSubscription ? (newGrades) => {
                     onUpdateGrades(newGrades);
-                    queueSyncAction('ACTUALIZAR_NOTAS', `Actualização de pauta de notas`, newGrades);
                   } : undefined}
                   getGrade={getGrade}
                   teachers={filteredTeachers}

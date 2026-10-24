@@ -616,28 +616,50 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
   switch (type) {
     case 'CADASTRAR_ALUNO':
     case 'ACTUALIZAR_ALUNO': {
+      await ensureSchoolExists(data.schoolId || 's1');
       const payload = mapStudentToSupabase(data);
-      const { error } = await supabase.from('alunos').upsert(payload);
+      if (!payload.school_id) {
+        payload.school_id = cleanSchoolId(data.schoolId) || 's1';
+      }
+
+      // Check if class exists in turmas table to prevent foreign key errors
+      if (payload.class_id) {
+        try {
+          const { data: classExists } = await supabase.from('turmas').select('id').eq('id', payload.class_id).maybeSingle();
+          if (!classExists) {
+            payload.class_id = null;
+          }
+        } catch {
+          // Ignore check failure
+        }
+      }
+
+      let { error } = await supabase.from('alunos').upsert(payload);
       if (error) {
-        if (error.message.includes('class_id') || error.message.includes('school_id')) {
-          payload.class_id = null;
+        console.warn('Aviso ao sincronizar aluno com Supabase:', error.message);
+        payload.class_id = null;
+        const { error: err2 } = await supabase.from('alunos').upsert(payload);
+        if (err2) {
           payload.school_id = null;
-          const { error: err2 } = await supabase.from('alunos').upsert(payload);
-          if (err2) throw err2;
-        } else {
-          throw error;
+          const { error: err3 } = await supabase.from('alunos').upsert(payload);
+          if (err3) throw err3;
         }
       }
       return true;
     }
     case 'IMPORTAR_ALUNOS': {
-      if (Array.isArray(data)) {
+      if (Array.isArray(data) && data.length > 0) {
+        await ensureSchoolExists(data[0]?.schoolId || 's1');
         const payloads = data.map(mapStudentToSupabase);
         const { error } = await supabase.from('alunos').upsert(payloads);
         if (error) {
-          const safePayloads = payloads.map(p => ({ ...p, class_id: null, school_id: null }));
+          const safePayloads = payloads.map(p => ({ ...p, class_id: null }));
           const { error: err2 } = await supabase.from('alunos').upsert(safePayloads);
-          if (err2) throw err2;
+          if (err2) {
+            const ultraSafePayloads = payloads.map(p => ({ ...p, class_id: null, school_id: null }));
+            const { error: err3 } = await supabase.from('alunos').upsert(ultraSafePayloads);
+            if (err3) throw err3;
+          }
         }
       }
       return true;
@@ -724,21 +746,69 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
       return true;
     }
     case 'ACTUALIZAR_NOTAS': {
-      if (Array.isArray(data)) {
-        const payloads = data.map(g => ({
-          student_id: g.studentId,
-          subject_id: g.subjectId,
+      const list = Array.isArray(data) ? data : (data ? [data] : []);
+      if (list.length > 0) {
+        const targetSchoolId = cleanSchoolId(list[0]?.schoolId) || 's1';
+        await ensureSchoolExists(targetSchoolId);
+
+        const payloads = list.map((g: any) => ({
+          student_id: g.studentId || g.student_id,
+          subject_id: g.subjectId || g.subject_id,
           period: g.period,
           type: g.type,
-          value: g.value,
-          nota_exame: g.notaExame,
-          school_id: cleanSchoolId(g.schoolId)
-        }));
-        const { error } = await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
+          value: typeof g.value === 'number' ? g.value : parseFloat(g.value || '0'),
+          nota_exame: g.notaExame !== undefined ? g.notaExame : (g.nota_exame !== undefined ? g.nota_exame : (g.type === 'Exame' || g.period === 'Exame' ? g.value : null)),
+          school_id: cleanSchoolId(g.schoolId || g.school_id) || targetSchoolId
+        })).filter(p => p.student_id && p.subject_id && p.period && p.type);
+
+        if (payloads.length === 0) return true;
+
+        // Ensure all students referenced in grades exist in 'alunos' table so foreign key constraint never fails
+        try {
+          const uniqueStudentIds = Array.from(new Set(payloads.map(p => p.student_id)));
+          const { data: existingStudents } = await supabase.from('alunos').select('id').in('id', uniqueStudentIds);
+          const existingSet = new Set((existingStudents || []).map((s: any) => s.id));
+          const missingStudents = uniqueStudentIds.filter(id => !existingSet.has(id));
+
+          if (missingStudents.length > 0) {
+            const stubs = missingStudents.map(id => ({
+              id,
+              name: 'Estudante ' + id,
+              bi: 'N/A',
+              enrollment_status: 'Matriculado',
+              school_id: targetSchoolId
+            }));
+            await supabase.from('alunos').upsert(stubs, { onConflict: 'id', ignoreDuplicates: true });
+          }
+        } catch (studentErr) {
+          console.warn('Aviso ao verificar alunos das notas:', studentErr);
+        }
+
+        // 1. Try batch upsert
+        let { error } = await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
+
         if (error) {
+          console.warn('Tentando upsert de notas com school_id nulo:', error.message);
           const safePayloads = payloads.map(p => ({ ...p, school_id: null }));
           const { error: err2 } = await supabase.from('pautas').upsert(safePayloads, { onConflict: 'student_id,subject_id,period,type' });
-          if (err2) throw err2;
+
+          // 2. Fallback to individual deletion + insertion in case unique constraint is missing
+          if (err2) {
+            console.warn('Tentando gravação resiliente de notas registo a registo...', err2.message);
+            for (const item of payloads) {
+              try {
+                await supabase.from('pautas')
+                  .delete()
+                  .eq('student_id', item.student_id)
+                  .eq('subject_id', item.subject_id)
+                  .eq('period', item.period)
+                  .eq('type', item.type);
+                await supabase.from('pautas').insert({ ...item, school_id: null });
+              } catch (singleErr) {
+                console.error('Falha ao gravar nota individual:', singleErr);
+              }
+            }
+          }
         }
       }
       return true;

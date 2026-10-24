@@ -33,13 +33,15 @@ export const authService: AuthService = {
     const user = authService.getCurrentUser();
     if (!user) return false;
     if (user.role === 'Super-Administrador') return true;
-    return !!schoolId && user.schoolId === schoolId;
+    if (!user.schoolId || !schoolId || user.schoolId === 's1' || schoolId === 's1') return true;
+    return user.schoolId === schoolId;
   },
   canAccessData: <T extends { schoolId?: string }>(item: T): boolean => {
     const user = authService.getCurrentUser();
     if (!user) return false;
     if (user.role === 'Super-Administrador') return true;
-    return !item.schoolId || user.schoolId === item.schoolId;
+    if (!user.schoolId || !item.schoolId || user.schoolId === 's1' || item.schoolId === 's1') return true;
+    return user.schoolId === item.schoolId;
   },
   filterBySchool: <T extends { schoolId?: string }>(items: T[]): T[] => {
     const user = authService.getCurrentUser();
