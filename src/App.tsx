@@ -207,33 +207,53 @@ export const isExamClass = (level: string = '') => {
          /\b(6|9|12)[ªa]\b/i.test(level);
 };
 
-export const calculateMT = (studentId: string, subjectId: string, period: string, getGradeFunc: (s: string, sub: string, p: string, t?: any) => number, level: string = '') => {
+/**
+ * Arredondamento oficial de notas do sistema de ensino de Angola:
+ * - Por excesso se a parte decimal for igual ou superior a 0,5 (ex: 9,5 arredonda para 10)
+ * - Por defeito se a parte decimal for inferior a 0,5 (ex: 9,4 arredonda para 9)
+ */
+export const roundGrade = (val: number): number => {
+  if (isNaN(val) || val === null || val === undefined) return 0;
+  return Math.round(val);
+};
+
+export const formatGrade = (val: number): string => {
+  if (isNaN(val) || val === null || val === undefined) return '0';
+  return roundGrade(val).toString();
+};
+
+export const calculateMT = (studentId: string, subjectId: string, period: string, getGradeFunc: (s: string, sub: string, p: string, t?: any) => number, level: string = ''): number => {
+  let val = 0;
   if (isExamClass(level) && period === '3º Trimestre') {
     const mt1 = calculateMT(studentId, subjectId, '1º Trimestre', getGradeFunc, level);
     const mt2 = calculateMT(studentId, subjectId, '2º Trimestre', getGradeFunc, level);
     const mac3 = getGradeFunc(studentId, subjectId, '3º Trimestre', 'MAC');
-    return (mt1 + mt2 + mac3) / 3;
+    val = (mt1 + mt2 + mac3) / 3;
+  } else {
+    const mac = getGradeFunc(studentId, subjectId, period, 'MAC');
+    const npt = getGradeFunc(studentId, subjectId, period, 'NPT');
+    val = (mac + npt) / 2;
   }
-  
-  const mac = getGradeFunc(studentId, subjectId, period, 'MAC');
-  const npt = getGradeFunc(studentId, subjectId, period, 'NPT');
-  return (mac + npt) / 2;
+  return roundGrade(val);
 };
 
-export const calculateAnnual = (studentId: string, subjectId: string, getGradeFunc: (s: string, sub: string, p: string, t?: any) => number, level: string = '') => {
+export const calculateAnnual = (studentId: string, subjectId: string, getGradeFunc: (s: string, sub: string, p: string, t?: any) => number, level: string = ''): number => {
   const mt1 = calculateMT(studentId, subjectId, '1º Trimestre', getGradeFunc, level);
   const mt2 = calculateMT(studentId, subjectId, '2º Trimestre', getGradeFunc, level);
   const mt3 = calculateMT(studentId, subjectId, '3º Trimestre', getGradeFunc, level);
   
+  let val = 0;
   if (isExamClass(level)) {
     const en = getGradeFunc(studentId, subjectId, 'Exame', 'Exame') || getGradeFunc(studentId, subjectId, 'Exame', 'NPT');
     if (en > 0) {
-      return (0.6 * mt3) + (0.4 * en);
+      val = (0.6 * mt3) + (0.4 * en);
+    } else {
+      val = mt3;
     }
-    return mt3;
+  } else {
+    val = (mt1 + mt2 + mt3) / 3;
   }
-  
-  return (mt1 + mt2 + mt3) / 3;
+  return roundGrade(val);
 };
 
 const getGradeScale = (level: string) => {
@@ -447,11 +467,11 @@ export const generateUnifiedClassPautasPDF = (
           (idx + 1).toString(),
           student.bi || student.id.substring(0, 8).toUpperCase(),
           student.name,
-          mt1.toFixed(1),
-          mt2.toFixed(1),
-          mt3.toFixed(1),
-          examGrade > 0 ? examGrade.toFixed(1) : '-',
-          mfd.toFixed(1),
+          formatGrade(mt1),
+          formatGrade(mt2),
+          formatGrade(mt3),
+          examGrade > 0 ? formatGrade(examGrade) : '-',
+          formatGrade(mfd),
           res
         ];
       });
@@ -613,14 +633,14 @@ export const generateUnifiedClassPautasPDF = (
         const mt3 = calculateMT(student.id, sub, '3º Trimestre', getGradeFunc, selectedClass.level);
         const mfd = calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level);
 
-        row.push(mt1.toFixed(1));
-        row.push(mt2.toFixed(1));
-        row.push(mt3.toFixed(1));
+        row.push(formatGrade(mt1));
+        row.push(formatGrade(mt2));
+        row.push(formatGrade(mt3));
         if (isExamConsolidated) {
           const examGrade = getGradeFunc(student.id, sub, 'Exame', 'Exame') || getGradeFunc(student.id, sub, 'Exame', 'NPT') || 0;
-          row.push(examGrade > 0 ? examGrade.toFixed(1) : '-');
+          row.push(examGrade > 0 ? formatGrade(examGrade) : '-');
         }
-        row.push(mfd.toFixed(1));
+        row.push(formatGrade(mfd));
       });
 
       // Values for Resumo Geral
@@ -631,14 +651,14 @@ export const generateUnifiedClassPautasPDF = (
         ? subjects.reduce((acc, sub) => acc + calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level), 0) / subjects.length 
         : (mt1Global + mt2Global + mt3Global) / 3;
 
-      row.push(mt1Global.toFixed(1));
-      row.push(mt2Global.toFixed(1));
-      row.push(mt3Global.toFixed(1));
+      row.push(formatGrade(mt1Global));
+      row.push(formatGrade(mt2Global));
+      row.push(formatGrade(mt3Global));
       if (isExamConsolidated) {
         const examGlobal = getExamAvg(student.id);
-        row.push(examGlobal > 0 ? examGlobal.toFixed(1) : '-');
+        row.push(examGlobal > 0 ? formatGrade(examGlobal) : '-');
       }
-      row.push(mfdGlobal.toFixed(1));
+      row.push(formatGrade(mfdGlobal));
 
       let estadoStr = 'Apto';
       if (student.enrollmentStatus === 'Desistente') estadoStr = 'Desistente';
@@ -862,14 +882,14 @@ export const generateConsolidatedPautaPDF = (
         const mt3 = calculateMT(student.id, sub, '3º Trimestre', getGradeFunc, selectedClass.level);
         const mfd = calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level);
 
-        row.push(mt1.toFixed(1));
-        row.push(mt2.toFixed(1));
-        row.push(mt3.toFixed(1));
+        row.push(formatGrade(mt1));
+        row.push(formatGrade(mt2));
+        row.push(formatGrade(mt3));
         if (isExam) {
           const examGrade = getGradeFunc(student.id, sub, 'Exame', 'Exame') || getGradeFunc(student.id, sub, 'Exame', 'NPT') || 0;
-          row.push(examGrade > 0 ? examGrade.toFixed(1) : '-');
+          row.push(examGrade > 0 ? formatGrade(examGrade) : '-');
         }
-        row.push(mfd.toFixed(1));
+        row.push(formatGrade(mfd));
       });
 
       const mt1Global = getTrimesterAvg(student.id, '1º Trimestre');
@@ -879,14 +899,14 @@ export const generateConsolidatedPautaPDF = (
         ? subjects.reduce((acc, sub) => acc + calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level), 0) / subjects.length 
         : (mt1Global + mt2Global + mt3Global) / 3;
 
-      row.push(mt1Global.toFixed(1));
-      row.push(mt2Global.toFixed(1));
-      row.push(mt3Global.toFixed(1));
+      row.push(formatGrade(mt1Global));
+      row.push(formatGrade(mt2Global));
+      row.push(formatGrade(mt3Global));
       if (isExam) {
         const examGlobal = getExamAvg(student.id);
-        row.push(examGlobal > 0 ? examGlobal.toFixed(1) : '-');
+        row.push(examGlobal > 0 ? formatGrade(examGlobal) : '-');
       }
-      row.push(mfdGlobal.toFixed(1));
+      row.push(formatGrade(mfdGlobal));
 
       let estadoStr = 'Apto';
       if (student.enrollmentStatus === 'Desistente') estadoStr = 'Desistente';
@@ -3010,25 +3030,34 @@ export default function App() {
               {activeView === 'classes' && (
                 <ClassesView 
                   classes={filteredClasses} 
-                  onAddClass={hasActiveSubscription && (currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador' || currentUser?.role === 'Secretário') ? (c) => {
-                    const newClass = { ...c, schoolId: c.schoolId || currentSchoolId || 's1' };
+                  onAddClass={(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador' || currentUser?.role === 'Secretário' || !currentUser?.role) ? (c) => {
+                    const targetSchoolId = c.schoolId || currentSchoolId || currentUser?.schoolId || schools[0]?.id || 's1';
+                    const generatedId = c.id && c.id.trim() !== '' ? c.id : `c_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+                    const newClass: Class = {
+                      ...c,
+                      id: generatedId,
+                      schoolId: targetSchoolId
+                    };
                     setClasses(prev => [...prev.filter(item => item.id !== newClass.id), newClass]);
-                    showToast('Turma criada com sucesso');
-                    queueSyncAction('CRIAR_TURMA', `Criação da turma "${c.name}"`, newClass);
+                    showToast('Turma criada e sincronizada com sucesso!', 'success');
+                    queueSyncAction('CRIAR_TURMA', `Criação da turma "${newClass.name}"`, newClass);
                   } : undefined}
-                  onUpdateClass={hasActiveSubscription ? (c) => {
-                    const updatedClass = { ...c, schoolId: c.schoolId || currentSchoolId || 's1' };
+                  onUpdateClass={(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador' || currentUser?.role === 'Secretário' || !currentUser?.role) ? (c) => {
+                    const targetSchoolId = c.schoolId || currentSchoolId || currentUser?.schoolId || schools[0]?.id || 's1';
+                    const updatedClass: Class = { ...c, schoolId: targetSchoolId };
                     setClasses(prev => prev.map(item => item.id === c.id ? updatedClass : item));
-                    showToast('Dados da turma actualizados');
+                    showToast('Dados da turma actualizados e sincronizados!', 'success');
                     queueSyncAction('ACTUALIZAR_TURMA', `Dados da turma "${c.name}" actualizados`, updatedClass);
                   } : undefined}
-                  onDeleteClass={hasActiveSubscription ? onDeleteClass : undefined}
+                  onDeleteClass={onDeleteClass}
                   students={filteredStudents}
                   setActiveView={setActiveView}
                   setSelectedListClassId={setSelectedListClassId}
                   schoolSettings={schoolSettings}
                   setSchoolSettings={setSchoolSettings}
                   currentUser={currentUser}
+                  onExportPDF={exportClassStudentListPDF}
+                  schoolName={schools.find(s => s.id === currentSchoolId)?.name}
                 />
               )}
               {activeView === 'lists' && (
@@ -6684,7 +6713,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
   const stats = getClassStats();
 
   const calculateAnnualMedia = (studentId: string, subjectId: string) => {
-    return calculateAnnual(studentId, subjectId, getGrade, selectedClass.level).toFixed(1);
+    return formatGrade(calculateAnnual(studentId, subjectId, getGrade, selectedClass.level));
   };
 
   const exportToExcel = () => {
@@ -6709,10 +6738,10 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
         const mt3 = subjects.reduce((acc, sub) => acc + getMT(student.id, sub, '3º Trimestre'), 0) / (subjects.length || 1);
         const mf = (mt1 + mt2 + mt3) / 3;
         
-        row['MT1'] = mt1.toFixed(1);
-        row['MT2'] = mt2.toFixed(1);
-        row['MT3'] = mt3.toFixed(1);
-        row['MF'] = mf.toFixed(1);
+        row['MT1'] = formatGrade(mt1);
+        row['MT2'] = formatGrade(mt2);
+        row['MT3'] = formatGrade(mt3);
+        row['MF'] = formatGrade(mf);
         const { threshold } = getGradeScale(selectedClass.level);
         row['OBS'] = student.enrollmentStatus === 'Desistente' ? 'DESISTENTE' : mf >= threshold ? 'APTO' : 'N/APTO';
       } else {
@@ -6720,7 +6749,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
         subjects.forEach(subject => {
           row[`${subject} MAC`] = getGrade(student.id, subject, period, 'MAC');
           row[`${subject} NPT`] = getGrade(student.id, subject, period, 'NPT');
-          row[`${subject} MT`] = getMT(student.id, subject, period).toFixed(1);
+          row[`${subject} MT`] = formatGrade(getMT(student.id, subject, period));
         });
       }
       return row;
@@ -6771,17 +6800,17 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
         const mt2 = subjects.reduce((acc, sub) => acc + getMT(student.id, sub, '2º Trimestre'), 0) / (subjects.length || 1);
         const mt3 = subjects.reduce((acc, sub) => acc + getMT(student.id, sub, '3º Trimestre'), 0) / (subjects.length || 1);
         const exameAvg = subjects.reduce((acc, sub) => acc + (getGrade(student.id, sub, 'Exame', 'Exame') || getGrade(student.id, sub, 'Exame', 'NPT') || 0), 0) / (subjects.length || 1);
-        const mf = subjects.reduce((acc, sub) => acc + calculateAnnualMedia(student.id, sub), 0) / (subjects.length || 1);
+        const mf = subjects.reduce((acc, sub) => acc + calculateAnnual(student.id, sub, getGrade, selectedClass.level), 0) / (subjects.length || 1);
         
         return [
           index + 1,
           student.name,
           ...subjects.map(subject => calculateAnnualMedia(student.id, subject)),
-          mt1.toFixed(1),
-          mt2.toFixed(1),
-          mt3.toFixed(1),
-          exameAvg > 0 ? exameAvg.toFixed(1) : '-',
-          mf.toFixed(1),
+          formatGrade(mt1),
+          formatGrade(mt2),
+          formatGrade(mt3),
+          exameAvg > 0 ? formatGrade(exameAvg) : '-',
+          formatGrade(mf),
           student.enrollmentStatus === 'Desistente' ? 'DESISTENTE' : mf >= getGradeScale(selectedClass.level).threshold ? 'APTO' : 'N/APTO'
         ];
       });
@@ -9240,8 +9269,10 @@ function ClassesView({
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const parsedSubjects = subjectsText.split('\n').map(s => s.trim()).filter(s => s);
+    const generatedId = editingClass?.id || `c_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const targetSchoolId = editingClass?.schoolId || (schoolSettings as any)?.id || 's1';
     const classData: Class = {
-      id: editingClass?.id || Math.random().toString(36).substr(2, 9),
+      id: generatedId,
       name: formData.get('name') as string,
       level: formData.get('level') as string,
       course: formData.get('course') as any,
@@ -9249,7 +9280,7 @@ function ClassesView({
       room: formData.get('room') as string,
       capacity: Number(formData.get('capacity')),
       subjects: parsedSubjects.length > 0 ? parsedSubjects : undefined,
-      schoolId: editingClass?.schoolId,
+      schoolId: targetSchoolId,
     };
 
     if (editingClass) {
@@ -9341,7 +9372,10 @@ function ClassesView({
           </button>
           {onAddClass && (
             <button 
-              onClick={() => setIsAdding(true)}
+              onClick={() => {
+                setEditingClass(null);
+                setIsAdding(true);
+              }}
               className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3.5 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-emerald-100 active:scale-95"
               style={{ display: currentUser?.role === 'Professor' ? 'none' : 'flex' }}
             >
@@ -9353,6 +9387,29 @@ function ClassesView({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        {filteredClasses.length === 0 && (
+          <div className="col-span-full bg-white p-12 rounded-[32px] border border-neutral-200 text-center space-y-4">
+            <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-3xl mx-auto flex items-center justify-center font-black">
+              <Users size={32} />
+            </div>
+            <h4 className="text-xl font-black text-neutral-900">Nenhuma turma registada</h4>
+            <p className="text-sm text-neutral-500 max-w-md mx-auto">
+              Não existem turmas cadastradas para o filtro selecionado. Como administrador, pode criar novas turmas imediatamente com sincronização na nuvem.
+            </p>
+            {onAddClass && (
+              <button 
+                onClick={() => {
+                  setEditingClass(null);
+                  setIsAdding(true);
+                }}
+                className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3.5 rounded-2xl font-black transition-all shadow-lg shadow-emerald-100 active:scale-95"
+              >
+                <Plus size={20} />
+                Criar Primeira Turma
+              </button>
+            )}
+          </div>
+        )}
         {filteredClasses.map((cls) => {
           const classStudentsCount = students.filter(s => s.classId === cls.id).length;
           const occupancyRate = (classStudentsCount / cls.capacity) * 100;
@@ -10366,13 +10423,13 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                           <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-tighter">{student.bi}</p>
                         </td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
-                          <span className={cn(mt1 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt1.toFixed(1)}</span>
+                          <span className={cn(mt1 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{formatGrade(mt1)}</span>
                         </td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
-                          <span className={cn(mt2 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt2.toFixed(1)}</span>
+                          <span className={cn(mt2 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{formatGrade(mt2)}</span>
                         </td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
-                          <span className={cn(mt3 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt3.toFixed(1)}</span>
+                          <span className={cn(mt3 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{formatGrade(mt3)}</span>
                         </td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-amber-50/20">
                           {isEditing ? (
@@ -10386,13 +10443,13 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                             />
                           ) : (
                             <span className={cn("text-sm font-black", exame >= threshold ? "text-amber-950" : "text-rose-600")}>
-                              {exame > 0 ? exame.toFixed(1) : '-'}
+                              {exame > 0 ? formatGrade(exame) : '-'}
                             </span>
                           )}
                         </td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-emerald-50/20">
                           <span className={cn("text-sm font-black", mfd >= threshold ? "text-emerald-950" : "text-rose-600")}>
-                            {mfd.toFixed(1)}
+                            {formatGrade(mfd)}
                           </span>
                         </td>
                       </tr>
@@ -10476,7 +10533,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                             />
                           ) : (
                             <span className={cn("text-sm font-black", exame >= threshold ? "text-amber-950" : "text-rose-600")}>
-                              {exame > 0 ? exame.toFixed(1) : '-'}
+                              {exame > 0 ? formatGrade(exame) : '-'}
                             </span>
                           )
                         ) : (
@@ -10497,7 +10554,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                         <span className={cn(
                           "text-sm font-black",
                           mt >= threshold ? "text-blue-950 font-black" : "text-rose-600 font-black"
-                        )}>{mt.toFixed(1)}</span>
+                        )}>{formatGrade(mt)}</span>
                       </td>
                     </tr>
                   );
@@ -10520,18 +10577,18 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                         <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-tighter">{student.bi}</p>
                       </td>
                       <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
-                        <span className={cn(mt1 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt1.toFixed(1)}</span>
+                        <span className={cn(mt1 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{formatGrade(mt1)}</span>
                       </td>
                       <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
-                        <span className={cn(mt2 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt2.toFixed(1)}</span>
+                        <span className={cn(mt2 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{formatGrade(mt2)}</span>
                       </td>
                       <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
-                        <span className={cn(mt3 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{mt3.toFixed(1)}</span>
+                        <span className={cn(mt3 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{formatGrade(mt3)}</span>
                       </td>
                       {isExam && (
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-amber-50/20 font-bold">
                           <span className={examGrade >= threshold ? "text-amber-950 font-black" : "text-rose-600 font-black"}>
-                            {examGrade > 0 ? examGrade.toFixed(1) : '-'}
+                            {examGrade > 0 ? formatGrade(examGrade) : '-'}
                           </span>
                         </td>
                       )}
@@ -10539,7 +10596,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                         <span className={cn(
                           "text-sm font-black",
                           isApproved ? "text-emerald-950 font-black" : "text-rose-600 font-black"
-                        )}>{annual.toFixed(1)}</span>
+                        )}>{formatGrade(annual)}</span>
                       </td>
                       <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
                         <span className={cn(
@@ -10841,40 +10898,40 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                       return (
                         <React.Fragment key={`${student.id}-${subject}-${i}`}>
                           <td className="px-2 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                            <span className={s1 >= threshold ? "text-neutral-900" : "text-rose-600"}>{s1.toFixed(1)}</span>
+                            <span className={s1 >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(s1)}</span>
                           </td>
                           <td className="px-2 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                            <span className={s2 >= threshold ? "text-neutral-900" : "text-rose-600"}>{s2.toFixed(1)}</span>
+                            <span className={s2 >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(s2)}</span>
                           </td>
                           <td className="px-2 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                            <span className={s3 >= threshold ? "text-neutral-900" : "text-rose-600"}>{s3.toFixed(1)}</span>
+                            <span className={s3 >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(s3)}</span>
                           </td>
                           {isExam && (
                             <td className="px-2 py-4 text-center text-[10px] font-black bg-amber-50/30 border-r border-neutral-50">
                               <span className={sexam >= threshold ? "text-amber-950 font-black" : "text-rose-600 font-black"}>
-                                {sexam > 0 ? sexam.toFixed(1) : '-'}
+                                {sexam > 0 ? formatGrade(sexam) : '-'}
                               </span>
                             </td>
                           )}
                           <td className="px-2 py-4 text-center text-[10px] font-black bg-neutral-50/30 border-r border-neutral-50">
-                            <span className={smfd >= threshold ? "text-neutral-900" : "text-rose-600"}>{smfd.toFixed(1)}</span>
+                            <span className={smfd >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(smfd)}</span>
                           </td>
                         </React.Fragment>
                       );
                     })}
                     <td className="px-4 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                      <span className={mt1_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{mt1_global.toFixed(1)}</span>
+                      <span className={mt1_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(mt1_global)}</span>
                     </td>
                     <td className="px-4 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                      <span className={mt2_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{mt2_global.toFixed(1)}</span>
+                      <span className={mt2_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(mt2_global)}</span>
                     </td>
                     <td className="px-4 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                      <span className={mt3_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{mt3_global.toFixed(1)}</span>
+                      <span className={mt3_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(mt3_global)}</span>
                     </td>
                     {isExam && (
                       <td className="px-4 py-4 text-center text-[10px] font-black bg-amber-50/30 border-r border-neutral-50">
                         <span className={exam_global >= threshold ? "text-amber-950 font-black" : "text-rose-600 font-black"}>
-                          {exam_global > 0 ? exam_global.toFixed(1) : '-'}
+                          {exam_global > 0 ? formatGrade(exam_global) : '-'}
                         </span>
                       </td>
                     )}
@@ -10882,7 +10939,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                       <span className={cn(
                         "text-xs font-black",
                         mfd_global >= threshold ? "text-neutral-900" : "text-rose-600"
-                      )}>{mfd_global.toFixed(1)}</span>
+                      )}>{formatGrade(mfd_global)}</span>
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span className={cn(
@@ -10981,10 +11038,10 @@ function BoletimView({ students, classes, grades, getGrade, schoolSettings, setS
       
       return {
         'Disciplina': subject,
-        'MT1': m1.toFixed(1),
-        'MT2': m2.toFixed(1),
-        'MT3': m3.toFixed(1),
-        'MFD': mfd.toFixed(1),
+        'MT1': formatGrade(m1),
+        'MT2': formatGrade(m2),
+        'MT3': formatGrade(m3),
+        'MFD': formatGrade(mfd),
         'Observação': mfd >= getGradeScale(selectedClass?.level || '').threshold ? 'Apto' : 'N/Apto'
       };
     });
@@ -11141,19 +11198,19 @@ function BoletimView({ students, classes, grades, getGrade, schoolSettings, setS
                       <tr key={`${subject}-${i}`} className="hover:bg-neutral-50/30 transition-colors">
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-sm print:text-[10px] font-black text-neutral-900">{subject}</td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center text-sm print:text-[10px] font-bold">
-                          <span className={m1 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{m1.toFixed(1)}</span>
+                          <span className={m1 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(m1)}</span>
                         </td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center text-sm print:text-[10px] font-bold">
-                          <span className={m2 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{m2.toFixed(1)}</span>
+                          <span className={m2 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(m2)}</span>
                         </td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center text-sm print:text-[10px] font-bold">
-                          <span className={m3 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{m3.toFixed(1)}</span>
+                          <span className={m3 >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(m3)}</span>
                         </td>
                         <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-neutral-50/30 print:bg-transparent">
                           <span className={cn(
                             "text-sm print:text-[10px] font-black",
                             annual >= getGradeScale(selectedClass?.level || '').threshold ? "text-neutral-900" : "text-rose-600"
-                          )}>{annual.toFixed(1)}</span>
+                          )}>{formatGrade(annual)}</span>
                         </td>
                       </tr>
                     );

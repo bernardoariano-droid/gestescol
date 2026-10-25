@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, FileSpreadsheet, Printer, Save, CheckCircle, AlertCircle, Award } from 'lucide-react';
 import { Class, Student, Grade, SchoolSettings } from './types';
-import { isExamClass, calculateMT, calculateAnnual } from './App';
+import { isExamClass, calculateMT, calculateAnnual, formatGrade, roundGrade } from './App';
 import * as XLSX from 'xlsx';
 
 interface ExamsViewProps {
@@ -150,11 +150,11 @@ export function ExamsView({
         'Nome Completo': st.name,
         'Turma': selectedClass.name,
         'Disciplina': selectedSubject,
-        'MT1': mt1.toFixed(1),
-        'MT2': mt2.toFixed(1),
-        'MT3 (CAP)': mt3.toFixed(1),
-        'Nota de Exame': examGrade > 0 ? examGrade.toFixed(1) : '-',
-        'Média Final (MFD)': mfd.toFixed(1),
+        'MT1': formatGrade(mt1),
+        'MT2': formatGrade(mt2),
+        'MT3 (CAP)': formatGrade(mt3),
+        'Nota de Exame': examGrade > 0 ? formatGrade(examGrade) : '-',
+        'Média Final (MFD)': formatGrade(mfd),
         'Resultado': isApproved ? 'Aprovado' : 'Reprovado'
       };
     });
@@ -168,7 +168,7 @@ export function ExamsView({
   // KPIs
   const evaluatedCount = classStudents.filter(st => (localExamNotes[st.id] ?? 0) > 0).length;
   const examSum = classStudents.reduce((acc, st) => acc + (localExamNotes[st.id] ?? 0), 0);
-  const examAvg = evaluatedCount > 0 ? (examSum / evaluatedCount).toFixed(1) : '0.0';
+  const examAvg = evaluatedCount > 0 ? formatGrade(examSum / evaluatedCount) : '0';
 
   return (
     <div className="space-y-8">
@@ -341,13 +341,13 @@ export function ExamsView({
                       <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-tighter">{student.bi}</p>
                     </td>
                     <td className="px-3 py-4 text-center font-bold text-neutral-600 text-sm">
-                      {mt1.toFixed(1)}
+                      {formatGrade(mt1)}
                     </td>
                     <td className="px-3 py-4 text-center font-bold text-neutral-600 text-sm">
-                      {mt2.toFixed(1)}
+                      {formatGrade(mt2)}
                     </td>
                     <td className="px-3 py-4 text-center font-black text-neutral-800 text-sm bg-neutral-50">
-                      {mt3.toFixed(1)}
+                      {formatGrade(mt3)}
                     </td>
                     <td className="px-4 py-4 text-center bg-amber-50/30">
                       <input 
@@ -367,7 +367,7 @@ export function ExamsView({
                     </td>
                     <td className="px-4 py-4 text-center bg-emerald-50/30">
                       <span className={`text-base font-black ${isApproved ? 'text-emerald-950 font-black' : 'text-rose-600 font-black'}`}>
-                        {mfd.toFixed(1)}
+                        {formatGrade(mfd)}
                       </span>
                     </td>
                     <td className="px-4 py-4 text-center">
