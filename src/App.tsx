@@ -208,6 +208,26 @@ export const isExamClass = (level: string = '') => {
 };
 
 /**
+ * Identifica se a turma pertence ao Ensino Secundário (7ª à 12ª/13ª Classe):
+ * - Iº Ciclo do Ensino Secundário: 7ª, 8ª, 9ª Classe (Pluridocência)
+ * - IIº Ciclo do Ensino Secundário: 10ª, 11ª, 12ª, 13ª Classe (Pluridocência)
+ */
+export const isSecondaryLevel = (level: string = '') => {
+  if (!level) return false;
+  return /^(7|8|9|10|11|12|13)[ªaºo]?\s*classe/i.test(level) ||
+         /\b(7|8|9|10|11|12|13)[ªa]\b/i.test(level) ||
+         /\b(7ª|8ª|9ª|10ª|11ª|12ª|13ª)\b/i.test(level) ||
+         level.toLowerCase().includes('secundário') ||
+         level.toLowerCase().includes('secundario') ||
+         level.toLowerCase().includes('ciclo') ||
+         level.toLowerCase().includes('puniv') ||
+         level.toLowerCase().includes('técnico') ||
+         level.toLowerCase().includes('tecnico') ||
+         level.toLowerCase().includes('médio') ||
+         level.toLowerCase().includes('medio');
+};
+
+/**
  * Arredondamento oficial de notas do sistema de ensino de Angola:
  * - Por excesso se a parte decimal for igual ou superior a 0,5 (ex: 9,5 arredonda para 10)
  * - Por defeito se a parte decimal for inferior a 0,5 (ex: 9,4 arredonda para 9)
@@ -2252,7 +2272,38 @@ export default function App() {
       return;
     }
     const newUserObj = { ...user, schoolId: targetSchoolId };
-    setUsers([...users, newUserObj]);
+    setUsers(prev => [...prev, newUserObj]);
+
+    // Sincronizar com o corpo docente (teachers) se o utilizador for Professor
+    if (user.role === 'Professor') {
+      const existingTeacher = teachers.find(t => t.id === user.id || t.name.toLowerCase() === user.name.toLowerCase());
+      const teacherAssignments: TeacherAssignment[] = user.assignments || [];
+      const teacherObj: Teacher = {
+        id: existingTeacher?.id || user.id,
+        name: user.name,
+        specialization: user.specialization || (user.assignedSubjects && user.assignedSubjects.length > 0 ? user.assignedSubjects.join(', ') : 'Docente'),
+        phone: user.phone || existingTeacher?.phone || '',
+        assignments: teacherAssignments,
+        schoolId: targetSchoolId
+      };
+
+      if (existingTeacher) {
+        setTeachers(prev => {
+          const updated = prev.map(t => t.id === teacherObj.id ? teacherObj : t);
+          localStorage.setItem('edugest_teachers', JSON.stringify(updated));
+          return updated;
+        });
+        queueSyncAction('ACTUALIZAR_PROFESSOR', `Atualização do professor "${user.name}"`, teacherObj);
+      } else {
+        setTeachers(prev => {
+          const updated = [...prev, teacherObj];
+          localStorage.setItem('edugest_teachers', JSON.stringify(updated));
+          return updated;
+        });
+        queueSyncAction('CADASTRAR_PROFESSOR', `Cadastro do professor "${user.name}"`, teacherObj);
+      }
+    }
+
     showToast('Utilizador criado com sucesso', 'success');
     logAuditEvent('Criar Utilizador', `Criou o utilizador ${user.name} (${user.role})`);
     queueSyncAction('CADASTRAR_UTILIZADOR', `Cadastro do utilizador "${user.name}"`, newUserObj);
@@ -2264,7 +2315,38 @@ export default function App() {
       return;
     }
     const updatedUserObj = { ...user, schoolId: targetSchoolId };
-    setUsers(users.map(u => u.id === user.id ? updatedUserObj : u));
+    setUsers(prev => prev.map(u => u.id === user.id ? updatedUserObj : u));
+
+    // Sincronizar com o corpo docente (teachers) se o utilizador for Professor
+    if (user.role === 'Professor') {
+      const existingTeacher = teachers.find(t => t.id === user.id || t.name.toLowerCase() === user.name.toLowerCase());
+      const teacherAssignments: TeacherAssignment[] = user.assignments || [];
+      const teacherObj: Teacher = {
+        id: existingTeacher?.id || user.id,
+        name: user.name,
+        specialization: user.specialization || (user.assignedSubjects && user.assignedSubjects.length > 0 ? user.assignedSubjects.join(', ') : (existingTeacher?.specialization || 'Docente')),
+        phone: user.phone || existingTeacher?.phone || '',
+        assignments: teacherAssignments,
+        schoolId: targetSchoolId
+      };
+
+      if (existingTeacher) {
+        setTeachers(prev => {
+          const updated = prev.map(t => t.id === teacherObj.id ? teacherObj : t);
+          localStorage.setItem('edugest_teachers', JSON.stringify(updated));
+          return updated;
+        });
+        queueSyncAction('ACTUALIZAR_PROFESSOR', `Atualização do professor "${user.name}"`, teacherObj);
+      } else {
+        setTeachers(prev => {
+          const updated = [...prev, teacherObj];
+          localStorage.setItem('edugest_teachers', JSON.stringify(updated));
+          return updated;
+        });
+        queueSyncAction('CADASTRAR_PROFESSOR', `Cadastro do professor "${user.name}"`, teacherObj);
+      }
+    }
+
     showToast('Dados do utilizador actualizados', 'success');
     logAuditEvent('Actualizar Utilizador', `Actualizou o utilizador ${user.name} (${user.role})`);
     queueSyncAction('ACTUALIZAR_UTILIZADOR', `Atualização do utilizador "${user.name}"`, updatedUserObj);
@@ -3013,17 +3095,17 @@ export default function App() {
                 <TeachersView 
                   teachers={filteredTeachers} 
                   classes={filteredClasses}
-                  onAddTeacher={hasActiveSubscription ? (t) => {
+                  onAddTeacher={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? (t) => {
                     setTeachers([...teachers, { ...t, schoolId: currentSchoolId || '' }]);
                     showToast('Professor cadastrado com sucesso');
                     queueSyncAction('CADASTRAR_PROFESSOR', `Cadastro do professor "${t.name}"`, t);
                   } : undefined}
-                  onUpdateTeacher={hasActiveSubscription ? (t) => {
+                  onUpdateTeacher={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? (t) => {
                     setTeachers(teachers.map(item => item.id === t.id ? { ...t, schoolId: t.schoolId || currentSchoolId || '' } : item));
                     showToast('Dados do professor actualizados');
                     queueSyncAction('ACTUALIZAR_PROFESSOR', `Dados de "${t.name}" actualizados`, t);
                   } : undefined}
-                  onDeleteTeacher={hasActiveSubscription ? onDeleteTeacher : undefined}
+                  onDeleteTeacher={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? onDeleteTeacher : undefined}
                   showToast={showToast}
                 />
               )}
@@ -3137,14 +3219,15 @@ export default function App() {
               {activeView === 'users' && (
                 <UsersView 
                   users={filteredUsers}
-                  onAddUser={hasActiveSubscription ? onAddUser : undefined}
-                  onUpdateUser={hasActiveSubscription ? onUpdateUser : undefined}
-                  onDeleteUser={hasActiveSubscription ? onDeleteUser : undefined}
+                  onAddUser={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? onAddUser : undefined}
+                  onUpdateUser={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? onUpdateUser : undefined}
+                  onDeleteUser={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? onDeleteUser : undefined}
                   showToast={showToast}
                   currentUser={currentUser}
                   schools={schools}
                   classes={classes}
                   students={students}
+                  teachers={teachers}
                 />
               )}
               {activeView === 'profile' && (
@@ -8792,7 +8875,7 @@ function AuditView({
   );
 }
 
-function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, currentUser, schools, classes, students }: { 
+function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, currentUser, schools, classes, students, teachers }: { 
   users: SystemUser[], 
   onAddUser?: (u: SystemUser) => void, 
   onUpdateUser?: (u: SystemUser) => void, 
@@ -8802,7 +8885,8 @@ function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, cu
   schoolName?: string,
   schools: School[],
   classes: Class[],
-  students: Student[]
+  students: Student[],
+  teachers?: Teacher[]
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -8839,59 +8923,131 @@ function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, cu
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredUsers.map(user => (
-          <div key={user.id} className="bg-white p-6 rounded-[32px] border border-neutral-200 shadow-sm hover:shadow-md transition-all group">
-            <div className="flex items-start justify-between mb-4">
-              <div className="w-12 h-12 bg-neutral-100 rounded-2xl flex items-center justify-center text-neutral-400 group-hover:bg-emerald-50 group-hover:text-emerald-600 transition-colors">
-                <UserCog size={24} />
-              </div>
-              <span className={cn(
-                "text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full",
-                user.status === 'Activo' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
-              )}>
-                {user.status}
-              </span>
-            </div>
-            
-            <div className="space-y-1 mb-6">
-              <h4 className="text-lg font-black text-neutral-900 tracking-tight">{user.name}</h4>
-              <p className="text-xs font-bold text-neutral-400 flex items-center gap-2">
-                <Mail size={12} />
-                {user.email}
-              </p>
-            </div>
+        {filteredUsers.map(user => {
+          const teacherAssignments = user.assignments || [];
+          const assignedClassIds = user.assignedClassIds || [];
 
-            <div className="flex items-center justify-between pt-4 border-t border-neutral-50">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-neutral-50 rounded-lg flex items-center justify-center text-neutral-400">
-                  <Lock size={14} />
+          return (
+            <div key={user.id} className="bg-white p-6 rounded-[32px] border border-neutral-200 shadow-sm hover:shadow-md transition-all group flex flex-col justify-between">
+              <div>
+                <div className="flex items-start justify-between mb-4">
+                  <div className="w-12 h-12 bg-neutral-100 rounded-2xl flex items-center justify-center text-neutral-400 group-hover:bg-emerald-50 group-hover:text-emerald-600 transition-colors">
+                    <UserCog size={24} />
+                  </div>
+                  <span className={cn(
+                    "text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full",
+                    user.status === 'Activo' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                  )}>
+                    {user.status}
+                  </span>
                 </div>
-                <div>
-                  <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Cargo</p>
-                  <p className="text-xs font-bold text-neutral-900">{user.role}</p>
+                
+                <div className="space-y-1 mb-4">
+                  <h4 className="text-lg font-black text-neutral-900 tracking-tight">{user.name}</h4>
+                  <p className="text-xs font-bold text-neutral-400 flex items-center gap-2">
+                    <Mail size={12} />
+                    {user.email}
+                  </p>
                 </div>
+
+                {user.role === 'Professor' && (
+                  <div className="mb-4 pt-3 border-t border-neutral-100 space-y-2">
+                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider">
+                      <span className="text-neutral-400 flex items-center gap-1.5">
+                        <BookOpen size={12} className="text-emerald-600" />
+                        Turmas & Disciplinas
+                      </span>
+                      <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
+                        {assignedClassIds.length} {assignedClassIds.length === 1 ? 'turma' : 'turmas'}
+                      </span>
+                    </div>
+
+                    {assignedClassIds.length === 0 ? (
+                      <p className="text-xs text-neutral-400 italic bg-neutral-50 p-2.5 rounded-xl border border-neutral-100">
+                        Nenhuma turma atribuída a este professor
+                      </p>
+                    ) : (
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {assignedClassIds.map(cid => {
+                          const cls = classes.find(c => c.id === cid);
+                          const isSec = isSecondaryLevel(cls?.level);
+                          const classAssignments = teacherAssignments.filter(a => a.classId === cid);
+                          const subjectsList = classAssignments.length > 0 
+                            ? classAssignments.map(a => a.subject)
+                            : (user.assignedSubjects || []);
+
+                          return (
+                            <div key={cid} className="p-2.5 bg-neutral-50 rounded-2xl border border-neutral-100 space-y-1.5">
+                              <div className="flex items-center justify-between gap-1.5">
+                                <span className="text-xs font-black text-neutral-900 truncate">
+                                  {cls?.name || 'Turma não encontrada'}
+                                </span>
+                                <span className={cn(
+                                  "text-[9px] font-black px-2 py-0.5 rounded-full shrink-0",
+                                  isSec ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"
+                                )}>
+                                  {isSec ? '7ª-12ª Classe' : '1ª-6ª Classe'}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {subjectsList.length > 0 ? (
+                                  subjectsList.map((s, idx) => (
+                                    <span key={idx} className="bg-white border border-neutral-200 text-neutral-800 text-[10px] font-bold px-2 py-0.5 rounded-lg shadow-2xs">
+                                      {s}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className={cn(
+                                    "text-[10px] font-bold px-2 py-0.5 rounded-lg",
+                                    isSec ? "bg-rose-50 text-rose-600 border border-rose-200" : "bg-neutral-100 text-neutral-500"
+                                  )}>
+                                    {isSec ? '⚠️ Nenhuma disciplina atribuída' : 'Todas as disciplinas (Monodocência)'}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="flex gap-2">
-                {(currentUser.role === 'Super-Administrador' || (currentUser.role === 'Administrador' && user.role !== 'Super-Administrador')) && (
-                  <button 
-                    onClick={() => setEditingUser(user)}
-                    className="p-2 text-neutral-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
-                  >
-                    <Pencil size={16} />
-                  </button>
-                )}
-                {(currentUser.role === 'Super-Administrador' || (currentUser.role === 'Administrador' && user.role !== 'Super-Administrador')) && (
-                  <button 
-                    onClick={() => onDeleteUser && onDeleteUser(user.id)}
-                    className="p-2 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
+
+              <div className="flex items-center justify-between pt-4 border-t border-neutral-50 mt-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-neutral-50 rounded-lg flex items-center justify-center text-neutral-400">
+                    <Lock size={14} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Cargo</p>
+                    <p className="text-xs font-bold text-neutral-900">{user.role}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {(currentUser.role === 'Super-Administrador' || (currentUser.role === 'Administrador' && user.role !== 'Super-Administrador')) && (
+                    <button 
+                      onClick={() => setEditingUser(user)}
+                      className="p-2 text-neutral-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
+                      title="Editar utilizador"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  )}
+                  {(currentUser.role === 'Super-Administrador' || (currentUser.role === 'Administrador' && user.role !== 'Super-Administrador')) && (
+                    <button 
+                      onClick={() => onDeleteUser && onDeleteUser(user.id)}
+                      className="p-2 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                      title="Eliminar utilizador"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {(isAdding || editingUser) && (
@@ -8901,6 +9057,7 @@ function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, cu
           schools={schools}
           classes={classes}
           students={students}
+          teachers={teachers}
           onClose={() => { setIsAdding(false); setEditingUser(null); }}
           onSave={(u) => {
             if (editingUser) onUpdateUser && onUpdateUser(u);
@@ -8914,7 +9071,7 @@ function UsersView({ users, onAddUser, onUpdateUser, onDeleteUser, showToast, cu
   );
 }
 
-function UserModal({ user, onClose, onSave, currentUser, schools, classes, students }: { 
+function UserModal({ user, onClose, onSave, currentUser, schools, classes, students, teachers }: { 
   user: SystemUser | null, 
   onClose: () => void, 
   onSave: (u: SystemUser) => void,
@@ -8922,11 +9079,43 @@ function UserModal({ user, onClose, onSave, currentUser, schools, classes, stude
   schoolName?: string,
   schools: School[],
   classes: Class[],
-  students: Student[]
+  students: Student[],
+  teachers?: Teacher[]
 }) {
   const [formData, setFormData] = useState<Partial<SystemUser>>(
-    user || { name: '', email: '', role: 'Secretário', status: 'Activo', schoolId: currentUser?.schoolId }
+    user || { name: '', email: '', role: 'Professor', status: 'Activo', schoolId: currentUser?.schoolId || schools[0]?.id }
   );
+
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [classFilter, setClassFilter] = useState('');
+
+  // Initial assigned class IDs
+  const [assignedClassIds, setAssignedClassIds] = useState<string[]>(() => {
+    if (user?.assignedClassIds && user.assignedClassIds.length > 0) {
+      return user.assignedClassIds;
+    }
+    if (user && teachers) {
+      const match = teachers.find(t => t.id === user.id || t.name.toLowerCase() === user.name.toLowerCase());
+      if (match?.assignments && match.assignments.length > 0) {
+        return Array.from(new Set(match.assignments.map(a => a.classId)));
+      }
+    }
+    return [];
+  });
+
+  // Initial assignments [{ classId, subject }]
+  const [assignments, setAssignments] = useState<TeacherAssignment[]>(() => {
+    if (user?.assignments && user.assignments.length > 0) {
+      return user.assignments;
+    }
+    if (user && teachers) {
+      const match = teachers.find(t => t.id === user.id || t.name.toLowerCase() === user.name.toLowerCase());
+      if (match?.assignments && match.assignments.length > 0) {
+        return match.assignments;
+      }
+    }
+    return [];
+  });
 
   const [selectedClassId, setSelectedClassId] = useState<string>(() => {
     if (user?.role === 'Aluno') {
@@ -8970,26 +9159,129 @@ function UserModal({ user, onClose, onSave, currentUser, schools, classes, stude
     }
   };
 
-  useEffect(() => {
-    if (formData.role === 'Professor' && !formData.assignedClassIds) {
-      setFormData(prev => ({ ...prev, assignedClassIds: [] }));
+  const handleToggleClass = (classId: string) => {
+    setValidationError(null);
+    setAssignedClassIds(prev => {
+      if (prev.includes(classId)) {
+        // Deselect class and remove its assignments
+        setAssignments(curr => curr.filter(a => a.classId !== classId));
+        return prev.filter(id => id !== classId);
+      } else {
+        return [...prev, classId];
+      }
+    });
+  };
+
+  const handleToggleSubject = (classId: string, subjectName: string) => {
+    setValidationError(null);
+    setAssignments(prev => {
+      const exists = prev.some(a => a.classId === classId && a.subject === subjectName);
+      if (exists) {
+        return prev.filter(a => !(a.classId === classId && a.subject === subjectName));
+      } else {
+        return [...prev, { classId, subject: subjectName }];
+      }
+    });
+  };
+
+  const handleSelectAllSubjects = (classId: string) => {
+    setValidationError(null);
+    const cls = classes.find(c => c.id === classId);
+    if (!cls) return;
+    const subjects = getSubjectsForClass(cls);
+    setAssignments(prev => {
+      const otherClassAssignments = prev.filter(a => a.classId !== classId);
+      const newForThisClass = subjects.map(s => ({ classId, subject: s }));
+      return [...otherClassAssignments, ...newForThisClass];
+    });
+  };
+
+  const handleClearSubjects = (classId: string) => {
+    setValidationError(null);
+    setAssignments(prev => prev.filter(a => a.classId !== classId));
+  };
+
+  const handleSave = () => {
+    setValidationError(null);
+    if (!formData.name?.trim()) {
+      setValidationError('Por favor, introduza o nome completo do utilizador.');
+      return;
     }
-  }, [formData.role]);
+    if (!formData.email?.trim()) {
+      setValidationError('Por favor, introduza o email / nome de utilizador.');
+      return;
+    }
+
+    const targetSchoolId = formData.schoolId || currentUser?.schoolId || schools[0]?.id || 's1';
+    const schoolClasses = classes.filter(c => c.schoolId === targetSchoolId);
+
+    if (formData.role === 'Professor') {
+      // Regra obrigatória: A partir da 7ª à 12ª Classe, toda turma atribuída deve ter pelo menos 1 disciplina atribuída
+      const missingDisciplineClasses: Class[] = [];
+
+      for (const cid of assignedClassIds) {
+        const cls = schoolClasses.find(c => c.id === cid) || classes.find(c => c.id === cid);
+        if (cls && isSecondaryLevel(cls.level)) {
+          const classSubs = assignments.filter(a => a.classId === cid);
+          if (classSubs.length === 0) {
+            missingDisciplineClasses.push(cls);
+          }
+        }
+      }
+
+      if (missingDisciplineClasses.length > 0) {
+        const names = missingDisciplineClasses.map(c => `"${c.name}"`).join(', ');
+        setValidationError(
+          `A partir da 7ª à 12ª Classe é obrigatório atribuir pelo menos uma disciplina a cada turma (regime de pluridocência). Selecione uma ou mais disciplinas para: ${names}.`
+        );
+        return;
+      }
+    }
+
+    const uniqueSubjects = Array.from(new Set(assignments.map(a => a.subject)));
+
+    const finalUser: SystemUser = {
+      ...(formData as SystemUser),
+      id: formData.id || Math.random().toString(36).substr(2, 9),
+      schoolId: targetSchoolId,
+      assignedClassIds: formData.role === 'Aluno' 
+        ? (selectedClassId ? [selectedClassId] : [])
+        : assignedClassIds,
+      assignments: formData.role === 'Professor' ? assignments : undefined,
+      assignedSubjects: formData.role === 'Professor' ? uniqueSubjects : undefined,
+      specialization: formData.specialization || (uniqueSubjects.length > 0 ? uniqueSubjects.join(', ') : undefined)
+    };
+
+    onSave(finalUser);
+  };
+
+  const targetSchoolId = formData.schoolId || currentUser?.schoolId || schools[0]?.id;
+  const availableClasses = classes.filter(c => !targetSchoolId || c.schoolId === targetSchoolId);
+  const filteredAvailableClasses = availableClasses.filter(c => 
+    c.name.toLowerCase().includes(classFilter.toLowerCase()) || 
+    c.level.toLowerCase().includes(classFilter.toLowerCase()) ||
+    (c.shift && c.shift.toLowerCase().includes(classFilter.toLowerCase()))
+  );
+
+  const isProfessor = formData.role === 'Professor';
 
   return (
     <div className="fixed inset-0 bg-neutral-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <motion.div 
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white w-full max-w-md rounded-[40px] shadow-2xl max-h-[90vh] overflow-y-auto"
+        className={cn(
+          "bg-white w-full rounded-[40px] shadow-2xl max-h-[92vh] overflow-y-auto flex flex-col",
+          isProfessor ? "max-w-2xl" : "max-w-md"
+        )}
       >
-        <div className="p-6 sm:p-8 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
+        <div className="p-6 sm:p-8 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50 shrink-0">
           <div>
             <h3 className="text-2xl font-black text-neutral-900 tracking-tight">
               {user ? 'Editar Utilizador' : 'Novo Utilizador'}
             </h3>
             <p className="text-xs font-bold text-neutral-400 uppercase tracking-widest mt-1">
-              Configure as credenciais de acesso
+              {isProfessor ? 'Cadastro Docente & Atribuição de Disciplinas (7ª-12ª Classe)' : 'Configure as credenciais de acesso'}
             </p>
           </div>
           <button onClick={onClose} className="p-3 hover:bg-white rounded-2xl transition-all text-neutral-400 hover:text-neutral-900 shadow-sm">
@@ -8997,89 +9289,271 @@ function UserModal({ user, onClose, onSave, currentUser, schools, classes, stude
           </button>
         </div>
 
-        <div className="p-6 sm:p-8 space-y-6">
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Nome Completo</label>
-            <div className="relative">
-              <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-300" size={18} />
-              <input 
-                type="text" 
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                disabled={formData.role === 'Aluno'}
-                className="w-full pl-12 pr-4 py-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all disabled:opacity-75 disabled:bg-neutral-100/50"
-                placeholder={formData.role === 'Aluno' ? "Selecione a turma e o aluno abaixo..." : "Ex: João Manuel"}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Email / Utilizador</label>
-            <div className="relative">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-300" size={18} />
-              <input 
-                type="email" 
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className="w-full pl-12 pr-4 py-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
-                placeholder="exemplo@escola.ao"
-              />
-            </div>
-          </div>
-          
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Palavra-passe</label>
-            <div className="relative">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-300" size={18} />
-              <input 
-                type="password" 
-                value={formData.password || ''}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="w-full pl-12 pr-4 py-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
-                placeholder="Nova palavra-passe"
-              />
-            </div>
-          </div>
-
-          {formData.role !== 'Aluno' ? (
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Turmas Atribuídas</label>
-              <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
-                {classes
-                  .filter(c => c.schoolId === formData.schoolId)
-                  .map(c => (
-                    <label key={c.id} className="flex items-center gap-2 p-3 bg-neutral-50 rounded-xl cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={formData.assignedClassIds?.includes(c.id) || false}
-                        onChange={(e) => {
-                          const newClassIds = e.target.checked 
-                            ? [...(formData.assignedClassIds || []), c.id]
-                            : (formData.assignedClassIds || []).filter(id => id !== c.id);
-                          setFormData({ ...formData, assignedClassIds: newClassIds });
-                        }}
-                        className="rounded text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <span className="text-xs font-bold text-neutral-900">{c.name}</span>
-                    </label>
-                  ))
-                }
+        <div className="p-6 sm:p-8 space-y-6 flex-1 overflow-y-auto">
+          {validationError && (
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-3 text-rose-700 text-xs font-bold animate-shake">
+              <AlertCircle size={20} className="shrink-0 text-rose-600 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-black">Validação Pedagógica Necessária:</p>
+                <p className="font-medium text-rose-800 leading-relaxed">{validationError}</p>
               </div>
             </div>
-          ) : (
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Nome Completo</label>
+              <div className="relative">
+                <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-300" size={18} />
+                <input 
+                  type="text" 
+                  value={formData.name || ''}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  disabled={formData.role === 'Aluno'}
+                  className="w-full pl-12 pr-4 py-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all disabled:opacity-75 disabled:bg-neutral-100/50"
+                  placeholder={formData.role === 'Aluno' ? "Selecione a turma e o aluno abaixo..." : "Ex: Manuel Gonçalves Afonso"}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Email / Utilizador</label>
+              <div className="relative">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-300" size={18} />
+                <input 
+                  type="email" 
+                  value={formData.email || ''}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  className="w-full pl-12 pr-4 py-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
+                  placeholder="professor@escola.ao"
+                />
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Palavra-passe</label>
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-300" size={18} />
+                <input 
+                  type="password" 
+                  value={formData.password || ''}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  className="w-full pl-12 pr-4 py-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
+                  placeholder={user ? "Deixar em branco para manter" : "Palavra-passe de acesso"}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Cargo / Função</label>
+              <select 
+                value={formData.role}
+                onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
+                className="w-full p-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all appearance-none cursor-pointer"
+              >
+                {(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') && (
+                  <>
+                    <option value="Administrador">Administrador</option>
+                    <option value="Secretário">Secretário</option>
+                    <option value="Financeiro">Financeiro</option>
+                  </>
+                )}
+                <option value="Professor">Professor (Docente)</option>
+                <option value="Aluno">Aluno</option>
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Estado</label>
+              <select 
+                value={formData.status}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
+                className="w-full p-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all appearance-none cursor-pointer"
+              >
+                <option value="Activo">Activo</option>
+                <option value="Inactivo">Inactivo</option>
+              </select>
+            </div>
+          </div>
+
+          {currentUser?.role === 'Super-Administrador' && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Escola Associada</label>
+              <select 
+                value={formData.schoolId || ''}
+                onChange={(e) => setFormData({ ...formData, schoolId: e.target.value })}
+                className="w-full p-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all appearance-none cursor-pointer"
+              >
+                {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* SESSÃO PEDAGÓGICA PARA PROFESSORES */}
+          {isProfessor ? (
+            <div className="space-y-4 pt-4 border-t border-neutral-100">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-emerald-50/70 p-4 rounded-3xl border border-emerald-100">
+                <div className="space-y-1">
+                  <h4 className="text-sm font-black text-emerald-950 flex items-center gap-2">
+                    <BookOpen size={18} className="text-emerald-700" />
+                    Atribuição de Turmas e Disciplinas (7ª à 12ª Classe)
+                  </h4>
+                  <p className="text-xs text-emerald-800 leading-relaxed">
+                    No Ensino Secundário (<strong>7ª à 12ª Classe</strong>), é obrigatório atribuir as turmas e selecionar <strong>uma ou mais disciplinas</strong> específicas para cada turma.
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <span className="text-xs font-black bg-white px-3 py-1.5 rounded-xl border border-emerald-200 text-emerald-800 shadow-2xs">
+                    {assignedClassIds.length} turma(s) • {assignments.length} atribuição(ões)
+                  </span>
+                </div>
+              </div>
+
+              {availableClasses.length > 5 && (
+                <div className="relative">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" size={16} />
+                  <input 
+                    type="text" 
+                    placeholder="Filtrar turmas por nome, classe ou turno..."
+                    value={classFilter}
+                    onChange={(e) => setClassFilter(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              )}
+
+              <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                {filteredAvailableClasses.length === 0 ? (
+                  <div className="p-8 text-center bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
+                    <p className="text-xs font-bold text-neutral-400">Nenhuma turma encontrada nesta escola.</p>
+                  </div>
+                ) : (
+                  filteredAvailableClasses.map(c => {
+                    const isSelected = assignedClassIds.includes(c.id);
+                    const isSec = isSecondaryLevel(c.level);
+                    const classAssignments = assignments.filter(a => a.classId === c.id);
+                    const classSubjects = getSubjectsForClass(c);
+                    const hasMissingSubject = isSelected && isSec && classAssignments.length === 0;
+
+                    return (
+                      <div 
+                        key={c.id} 
+                        className={cn(
+                          "rounded-2xl border p-4 transition-all space-y-3",
+                          isSelected 
+                            ? "bg-white border-emerald-300 shadow-sm ring-1 ring-emerald-500/20" 
+                            : "bg-neutral-50/70 border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50"
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <label className="flex items-start gap-3 cursor-pointer flex-1">
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected}
+                              onChange={() => handleToggleClass(c.id)}
+                              className="mt-1 w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                            />
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-black text-neutral-900">{c.name}</span>
+                                <span className={cn(
+                                  "text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full",
+                                  isSec ? "bg-amber-100 text-amber-900 border border-amber-200" : "bg-emerald-100 text-emerald-900 border border-emerald-200"
+                                )}>
+                                  {isSec ? '7ª-12ª Classe • Pluridocência' : '1ª-6ª Classe • Primário'}
+                                </span>
+                              </div>
+                              <p className="text-xs font-semibold text-neutral-400 mt-0.5">
+                                {c.level} • Turno: {c.shift} {c.course ? `• ${c.course}` : ''}
+                              </p>
+                            </div>
+                          </label>
+
+                          {isSelected && (
+                            <span className={cn(
+                              "text-xs font-bold px-2.5 py-1 rounded-xl shrink-0",
+                              classAssignments.length > 0 
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
+                                : isSec 
+                                  ? "bg-rose-50 text-rose-700 border border-rose-200" 
+                                  : "bg-neutral-100 text-neutral-600"
+                            )}>
+                              {classAssignments.length} disciplina(s)
+                            </span>
+                          )}
+                        </div>
+
+                        {isSelected && (
+                          <div className="pt-3 border-t border-neutral-100 space-y-2.5 pl-7">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-neutral-400">
+                                Disciplinas ({classSubjects.length}):
+                              </span>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectAllSubjects(c.id)}
+                                  className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg transition-colors"
+                                >
+                                  Selecionar Todas
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleClearSubjects(c.id)}
+                                  className="text-[10px] font-bold text-neutral-500 hover:text-neutral-700 bg-neutral-100 hover:bg-neutral-200 px-2.5 py-1 rounded-lg transition-colors"
+                                >
+                                  Limpar
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1.5">
+                              {classSubjects.map((sub, sIdx) => {
+                                const isSubSelected = classAssignments.some(a => a.subject === sub);
+                                return (
+                                  <button
+                                    key={sIdx}
+                                    type="button"
+                                    onClick={() => handleToggleSubject(c.id, sub)}
+                                    className={cn(
+                                      "text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all active:scale-95",
+                                      isSubSelected 
+                                        ? "bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-600" 
+                                        : "bg-white text-neutral-700 border border-neutral-200 hover:border-emerald-300 hover:text-emerald-700"
+                                    )}
+                                  >
+                                    {isSubSelected ? <Check size={14} className="shrink-0" /> : <Plus size={14} className="shrink-0 text-neutral-400" />}
+                                    <span>{sub}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {hasMissingSubject && (
+                              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-700 text-xs font-bold">
+                                <AlertCircle size={15} className="shrink-0 text-rose-600" />
+                                <span>Obrigatório: Selecione pelo menos 1 disciplina para esta turma de 7ª à 12ª Classe.</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          ) : formData.role === 'Aluno' ? (
             <div className="space-y-4 p-4 bg-emerald-50/50 border border-emerald-100 rounded-3xl">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-emerald-700 uppercase tracking-widest ml-1">Turma do Aluno</label>
                 <select 
                   value={selectedClassId}
                   onChange={handleClassChange}
-                  className="w-full p-3.5 bg-white border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
+                  className="w-full p-3.5 bg-white border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all cursor-pointer"
                 >
                   <option value="">Selecione a Turma</option>
-                  {classes
-                    .filter(c => c.schoolId === formData.schoolId)
-                    .map(c => <option key={c.id} value={c.id}>{c.name}</option>)
-                  }
+                  {availableClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
 
@@ -9089,72 +9563,52 @@ function UserModal({ user, onClose, onSave, currentUser, schools, classes, stude
                   value={formData.studentId || ''}
                   onChange={handleStudentChange}
                   disabled={!selectedClassId}
-                  className="w-full p-3.5 bg-white border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all disabled:opacity-50"
+                  className="w-full p-3.5 bg-white border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all disabled:opacity-50 cursor-pointer"
                 >
                   <option value="">Selecione o Aluno</option>
                   {students
-                    .filter(s => s.classId === selectedClassId && s.schoolId === formData.schoolId)
+                    .filter(s => s.classId === selectedClassId && (!targetSchoolId || s.schoolId === targetSchoolId))
                     .map(s => <option key={s.id} value={s.id}>{s.name} {s.bi ? `(BI: ${s.bi})` : ''}</option>)
                   }
                 </select>
               </div>
             </div>
-          )}
-          <div className="grid grid-cols-2 gap-4">
+          ) : (
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Cargo / Role</label>
-              <select 
-                value={formData.role}
-                onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
-                className="w-full p-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all appearance-none"
-              >
-                {(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') && (
-                  <>
-                    <option value="Administrador">Administrador</option>
-                    <option value="Secretário">Secretário</option>
-                    <option value="Financeiro">Financeiro</option>
-                  </>
-                )}
-                <option value="Professor">Professor</option>
-                <option value="Aluno">Aluno</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Estado</label>
-              <select 
-                value={formData.status}
-                onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
-                className="w-full p-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all appearance-none"
-              >
-                <option value="Activo">Activo</option>
-                <option value="Inactivo">Inactivo</option>
-              </select>
-            </div>
-          </div>
-          {currentUser?.role === 'Super-Administrador' && (
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Escola</label>
-              <select 
-                value={formData.schoolId || ''}
-                onChange={(e) => setFormData({ ...formData, schoolId: e.target.value })}
-                className="w-full p-3.5 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all appearance-none"
-              >
-                <option value="">Selecione uma escola</option>
-                {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Turmas com Acesso</label>
+              <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
+                {availableClasses.map(c => (
+                  <label key={c.id} className="flex items-center gap-2 p-3 bg-neutral-50 rounded-xl cursor-pointer hover:bg-neutral-100 transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={assignedClassIds.includes(c.id)}
+                      onChange={(e) => {
+                        const newClassIds = e.target.checked 
+                          ? [...assignedClassIds, c.id]
+                          : assignedClassIds.filter(id => id !== c.id);
+                        setAssignedClassIds(newClassIds);
+                      }}
+                      className="rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-neutral-900 truncate">{c.name}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           )}
         </div>
 
-        <div className="p-6 sm:p-8 bg-neutral-50/50 border-t border-neutral-100 flex gap-4">
+        <div className="p-6 sm:p-8 bg-neutral-50/50 border-t border-neutral-100 flex gap-4 shrink-0">
           <button 
+            type="button"
             onClick={onClose}
             className="flex-1 py-4 text-neutral-500 font-black text-sm hover:text-neutral-900 transition-colors"
           >
             Cancelar
           </button>
           <button 
-            onClick={() => onSave({ ...formData, id: formData.id || Math.random().toString(36).substr(2, 9) } as SystemUser)}
+            type="button"
+            onClick={handleSave}
             className="flex-[2] py-4 bg-neutral-900 text-white rounded-2xl font-black text-sm shadow-xl shadow-neutral-200 hover:bg-neutral-800 transition-all active:scale-95"
           >
             {user ? 'Actualizar Dados' : 'Criar Utilizador'}
@@ -9164,6 +9618,7 @@ function UserModal({ user, onClose, onSave, currentUser, schools, classes, stude
     </div>
   );
 }
+
 
 function ClassesView({ 
   classes, 
@@ -10068,10 +10523,28 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
   const [localGrades, setLocalGrades] = useState<Grade[]>([]);
 
   const selectedClass = availableClasses.find(c => c.id === selectedClassId);
-  const subjects = getSubjectsForClass(selectedClass);
+  const rawClassSubjects = getSubjectsForClass(selectedClass);
+
+  const subjects = useMemo(() => {
+    if (currentUser?.role === 'Professor' && selectedClassId) {
+      const classAssignments = (currentUser.assignments || [])
+        .filter((a: any) => a.classId === selectedClassId)
+        .map((a: any) => a.subject);
+
+      if (classAssignments.length > 0) {
+        const filtered = rawClassSubjects.filter(s => classAssignments.includes(s));
+        if (filtered.length > 0) return filtered;
+      }
+      if (currentUser.assignedSubjects && currentUser.assignedSubjects.length > 0) {
+        const filtered = rawClassSubjects.filter(s => currentUser.assignedSubjects.includes(s));
+        if (filtered.length > 0) return filtered;
+      }
+    }
+    return rawClassSubjects;
+  }, [rawClassSubjects, currentUser, selectedClassId]);
   
   useEffect(() => {
-    if (subjects.length > 0 && !selectedSubject) {
+    if (subjects.length > 0 && (!selectedSubject || !subjects.includes(selectedSubject))) {
       setSelectedSubject(subjects[0]);
     }
   }, [subjects, selectedSubject]);

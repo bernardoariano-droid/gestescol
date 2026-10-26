@@ -542,19 +542,46 @@ export async function pullFromSupabase() {
         receiptNumber: e.receipt_number,
         schoolId: e.school_id || 's1'
       })),
-      users: (utilizadoresRes.data || []).map((u: any) => ({
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        password: u.password,
-        role: u.role,
-        status: u.status,
-        lastLogin: u.last_login,
-        schoolId: u.school_id || 's1',
-        assignedClassIds: Array.isArray(u.assigned_class_ids) ? u.assigned_class_ids : [],
-        avatarUrl: u.avatar_url,
-        studentId: u.student_id
-      })),
+      users: (utilizadoresRes.data || []).map((u: any) => {
+        let assignedClassIds: string[] = [];
+        let assignments: any[] = [];
+        let assignedSubjects: string[] = [];
+
+        if (Array.isArray(u.assigned_class_ids)) {
+          assignedClassIds = u.assigned_class_ids;
+        } else if (u.assigned_class_ids && typeof u.assigned_class_ids === 'object') {
+          assignedClassIds = u.assigned_class_ids.classIds || u.assigned_class_ids.assignedClassIds || [];
+          assignments = u.assigned_class_ids.assignments || [];
+          assignedSubjects = u.assigned_class_ids.assignedSubjects || [];
+        }
+
+        // Cross-reference with teachers if assignments not found
+        if (u.role === 'Professor' && assignments.length === 0) {
+          const matchingProf = (professoresRes.data || []).find((p: any) => p.id === u.id || p.name?.toLowerCase() === u.name?.toLowerCase());
+          if (matchingProf && Array.isArray(matchingProf.assignments)) {
+            assignments = matchingProf.assignments;
+            if (assignedClassIds.length === 0) {
+              assignedClassIds = Array.from(new Set(matchingProf.assignments.map((a: any) => a.classId)));
+            }
+          }
+        }
+
+        return {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          password: u.password,
+          role: u.role,
+          status: u.status,
+          lastLogin: u.last_login,
+          schoolId: u.school_id || 's1',
+          assignedClassIds,
+          assignments: assignments.length > 0 ? assignments : undefined,
+          assignedSubjects: assignedSubjects.length > 0 ? assignedSubjects : undefined,
+          avatarUrl: u.avatar_url,
+          studentId: u.student_id
+        };
+      }),
       announcements: (comunicadosRes.data || []).map((a: any) => {
         let parsedAudience = a.target_audience;
         let targetUserIds: string[] | undefined = undefined;
@@ -892,7 +919,11 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
         status: data.status || 'Activo',
         last_login: data.lastLogin || null,
         school_id: cleanSchoolId(data.schoolId),
-        assigned_class_ids: data.assignedClassIds || [],
+        assigned_class_ids: (data.assignments && data.assignments.length > 0) ? {
+          classIds: data.assignedClassIds || [],
+          assignments: data.assignments || [],
+          assignedSubjects: data.assignedSubjects || []
+        } : (data.assignedClassIds || []),
         avatar_url: data.avatarUrl || null,
         student_id: data.studentId || null
       };

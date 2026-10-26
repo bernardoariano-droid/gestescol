@@ -126,6 +126,10 @@ export type SystemUser = {
   lastLogin?: string;
   schoolId?: string;
   assignedClassIds?: string[];
+  assignedSubjects?: string[];
+  assignments?: TeacherAssignment[];
+  phone?: string;
+  specialization?: string;
   avatarUrl?: string;
   studentId?: string;
 };
