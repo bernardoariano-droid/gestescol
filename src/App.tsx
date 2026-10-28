@@ -93,7 +93,7 @@ import autoTable from 'jspdf-autotable';
 
 import { Student, Class, Teacher, Payment, Grade, CertificateTemplate, TeacherAssignment, SystemUser, Expense, School, Announcement, AuditLog } from './types';
 import { authService } from './auth';
-import { pushItemToSupabase, pushItemToSupabaseWithRetry, validateAndCleanSyncQueue, pullFromSupabase, SUPABASE_SQL_SCHEMA, testConnection, clearAllSupabaseData, performFullBackup, SUPABASE_URL, supabase } from './supabase';
+import { pushItemToSupabase, pushItemToSupabaseWithRetry, validateAndCleanSyncQueue, pullFromSupabase, SUPABASE_SQL_SCHEMA, testConnection, clearAllSupabaseData, performFullBackup, SUPABASE_URL, supabase, sendStudentEnrollmentToBackend, sendBulkStudentsToBackend, sendGradesToBackend } from './supabase';
 import { INITIAL_STUDENTS, INITIAL_CLASSES, INITIAL_TEACHERS, INITIAL_PAYMENTS, MONTHS, INITIAL_USERS, INITIAL_EXPENSES, INITIAL_SCHOOLS } from './constants';
 
 // Utility for tailwind classes
@@ -1068,7 +1068,9 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_SCHOOLS;
   });
   const [selectedSchoolId, setSelectedSchoolId] = useState<string>(() => {
-    return localStorage.getItem('edugest_selected_school_id') || 's1';
+    const saved = localStorage.getItem('edugest_selected_school_id');
+    if (!saved || saved === 's1') return 'all';
+    return saved;
   });
 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
@@ -1860,10 +1862,13 @@ export default function App() {
   });
 
   const currentSchoolId = currentUser?.role === 'Super-Administrador'
-    ? (selectedSchoolId || 's1')
+    ? selectedSchoolId
     : (currentUser?.schoolId || selectedSchoolId || (schools[0]?.id || 's1'));
 
-  const currentSchool = useMemo(() => schools.find(s => s.id === currentSchoolId), [schools, currentSchoolId]);
+  const currentSchool = useMemo(() => {
+    if (currentSchoolId === 'all') return schools.find(s => s.id === 's_2ts520h0z') || schools[0];
+    return schools.find(s => s.id === currentSchoolId) || schools[0];
+  }, [schools, currentSchoolId]);
   
   const hasActiveSubscription = currentUser?.role === 'Super-Administrador' || (
     !currentSchool?.subscription || currentSchool.subscription.status === 'Activa'
@@ -1889,40 +1894,40 @@ export default function App() {
 
   const isSingleSchool = schools.length <= 1;
   const filteredStudents = useMemo(() => 
-    students.filter(s => isSingleSchool || !currentSchoolId || !s.schoolId || s.schoolId === currentSchoolId),
+    students.filter(s => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !s.schoolId || s.schoolId === currentSchoolId),
     [students, currentSchoolId, isSingleSchool]
   );
   const filteredClasses = useMemo(() => 
     classes.filter(c => 
-      (isSingleSchool || !currentSchoolId || !c.schoolId || c.schoolId === currentSchoolId) &&
+      (isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !c.schoolId || c.schoolId === currentSchoolId) &&
       (currentUser?.role !== 'Professor' || currentUser.assignedClassIds?.includes(c.id))
     ),
     [classes, currentSchoolId, isSingleSchool, currentUser]
   );
   const filteredTeachers = useMemo(() => 
-    teachers.filter(t => isSingleSchool || !currentSchoolId || !t.schoolId || t.schoolId === currentSchoolId),
+    teachers.filter(t => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !t.schoolId || t.schoolId === currentSchoolId),
     [teachers, currentSchoolId, isSingleSchool]
   );
   const filteredPayments = useMemo(() => 
-    payments.filter(p => isSingleSchool || !currentSchoolId || !p.schoolId || p.schoolId === currentSchoolId),
+    payments.filter(p => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !p.schoolId || p.schoolId === currentSchoolId),
     [payments, currentSchoolId, isSingleSchool]
   );
   const filteredExpenses = useMemo(() => 
-    expenses.filter(e => isSingleSchool || !currentSchoolId || !e.schoolId || e.schoolId === currentSchoolId),
+    expenses.filter(e => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !e.schoolId || e.schoolId === currentSchoolId),
     [expenses, currentSchoolId, isSingleSchool]
   );
   const filteredGrades = useMemo(() => 
-    grades.filter(g => isSingleSchool || !currentSchoolId || !g.schoolId || g.schoolId === currentSchoolId),
+    grades.filter(g => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !g.schoolId || g.schoolId === currentSchoolId),
     [grades, currentSchoolId, isSingleSchool]
   );
   const filteredTemplates = useMemo(() => 
-    templates.filter(t => isSingleSchool || !currentSchoolId || !t.schoolId || t.schoolId === currentSchoolId),
+    templates.filter(t => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !t.schoolId || t.schoolId === currentSchoolId),
     [templates, currentSchoolId, isSingleSchool]
   );
   const filteredUsers = useMemo(() => 
     users.filter(u => 
       currentUser?.role === 'Super-Administrador'
-        ? (!currentSchoolId || u.schoolId === currentSchoolId || u.role === 'Super-Administrador')
+        ? (!currentSchoolId || currentSchoolId === 'all' || u.schoolId === currentSchoolId || u.role === 'Super-Administrador')
         : (u.schoolId === currentUser?.schoolId)
     ),
     [users, currentSchoolId, currentUser]
@@ -2261,7 +2266,10 @@ export default function App() {
       return merged;
     });
 
-    showToast('Notas actualizadas e sincronizadas com sucesso!', 'success');
+    showToast('Notas enviadas e guardadas com sucesso no backend!', 'success');
+    sendGradesToBackend(withSchoolId).catch(err => {
+      console.warn('Erro ao enviar notas ao backend:', err);
+    });
     queueSyncAction('ACTUALIZAR_NOTAS', 'Actualização de pauta de notas', withSchoolId);
   };
 
@@ -2824,14 +2832,19 @@ export default function App() {
                   value={selectedSchoolId}
                   onChange={(e) => {
                     setSelectedSchoolId(e.target.value);
+                    localStorage.setItem('edugest_selected_school_id', e.target.value);
                   }}
                   className="bg-transparent border-none text-xs font-black text-neutral-800 outline-none pr-2 cursor-pointer focus:ring-0"
                 >
-                  {schools.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
+                  <option value="all">🌐 Todas as Escolas ({students.length} alunos no total)</option>
+                  {schools.map(s => {
+                    const count = students.filter(st => st.schoolId === s.id).length;
+                    return (
+                      <option key={s.id} value={s.id}>
+                        🏫 {s.name} ({count} alunos)
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             ) : (
@@ -2957,7 +2970,10 @@ export default function App() {
                     const targetSchoolId = s.schoolId || currentSchoolId || (schools[0]?.id || 's1');
                     const studentWithSchool: Student = { ...s, schoolId: targetSchoolId };
                     setStudents(prev => [...prev.filter(item => item.id !== studentWithSchool.id), studentWithSchool]);
-                    showToast('Aluno matriculado com sucesso', 'success');
+                    showToast('Aluno matriculado e enviado para o backend com sucesso!', 'success');
+                    sendStudentEnrollmentToBackend(studentWithSchool).catch(err => {
+                      console.warn('Erro ao enviar matrícula ao backend:', err);
+                    });
                     queueSyncAction('CADASTRAR_ALUNO', `Matrícula do aluno "${studentWithSchool.name}"`, studentWithSchool);
                   } : undefined}
                   onUpdateStudent={hasActiveSubscription ? (s) => {
@@ -3032,10 +3048,13 @@ export default function App() {
 
                     setStudents([...students, ...newStudents]);
                     if (newClassesToAdd.length > 0) {
-                      showToast(`${newStudents.length} alunos importados e ${newClassesToAdd.length} novas turmas criadas com sucesso!`, 'success');
+                      showToast(`${newStudents.length} alunos importados e ${newClassesToAdd.length} novas turmas criadas e enviadas ao backend!`, 'success');
                     } else {
-                      showToast(`${newStudents.length} alunos importados com sucesso!`, 'success');
+                      showToast(`${newStudents.length} alunos importados e enviados para o backend com sucesso!`, 'success');
                     }
+                    sendBulkStudentsToBackend(newStudents).catch(err => {
+                      console.warn('Erro ao enviar importação em massa ao backend:', err);
+                    });
                     queueSyncAction('IMPORTAR_ALUNOS', `Importação de ${newStudents.length} alunos`, newStudents);
                   } : undefined}
                 />

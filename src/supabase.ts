@@ -134,19 +134,15 @@ CREATE TABLE IF NOT EXISTS pautas (
 -- Garantir colunas e restrições mesmo se a tabela já tiver sido criada antes
 ALTER TABLE pautas ADD COLUMN IF NOT EXISTS nota_exame NUMERIC(4,2);
 ALTER TABLE pautas ADD COLUMN IF NOT EXISTS mini_pauta_id TEXT;
+ALTER TABLE pautas ADD COLUMN IF NOT EXISTS school_id TEXT REFERENCES escolas(id) ON DELETE SET NULL;
 
-DO $$ 
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'unique_grade_entry'
-  ) THEN
-    ALTER TABLE pautas ADD CONSTRAINT unique_grade_entry UNIQUE(student_id, subject_id, period, type);
-  END IF;
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
+-- Actualizar a restrição de unicidade sem blocos procedurais
+ALTER TABLE pautas DROP CONSTRAINT IF EXISTS unique_grade_entry;
+ALTER TABLE pautas ADD CONSTRAINT unique_grade_entry UNIQUE(student_id, subject_id, period, type);
 
--- 5.1. View Oficial: notas (Sinónimo de Pautas para Consulta e Compatibilidade Total)
-CREATE OR REPLACE VIEW notas AS 
+-- 5.1. View Oficial: notas (Remover a versão antiga primeiro para permitir reorganização de colunas)
+DROP VIEW IF EXISTS notas CASCADE;
+CREATE VIEW notas AS 
 SELECT 
   id,
   student_id,
@@ -557,6 +553,25 @@ export async function testConnection(): Promise<boolean> {
   }
 }
 
+// Helper: Fetch all rows across pagination (bypasses PostgREST 1000-row limit)
+async function fetchAllTableRows(table: string, select: string = '*') {
+  let allRows: any[] = [];
+  let from = 0;
+  const pageSize = 1000;
+  while (true) {
+    const { data, error } = await supabase.from(table).select(select).range(from, from + pageSize - 1);
+    if (error) {
+      console.warn(`Aviso ao ler página de ${table}:`, error.message);
+      break;
+    }
+    if (!data || data.length === 0) break;
+    allRows = allRows.concat(data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return allRows;
+}
+
 // Pull complete database data from backend or direct Supabase client
 export async function pullFromSupabase() {
   try {
@@ -571,40 +586,35 @@ export async function pullFromSupabase() {
 
   try {
     const [
-      escolasRes,
-      turmasRes,
-      alunosRes,
-      professoresRes,
-      pautasRes,
-      pagamentosRes,
-      despesasRes,
-      utilizadoresRes,
-      comunicadosRes,
-      auditRes
+      escolas,
+      turmas,
+      alunos,
+      professores,
+      pautas,
+      pagamentos,
+      despesas,
+      utilizadores,
+      comunicados,
+      auditLogs
     ] = await Promise.all([
-      supabase.from('escolas').select('*'),
-      supabase.from('turmas').select('*'),
-      supabase.from('alunos').select('*'),
-      supabase.from('professores').select('*'),
-      supabase.from('pautas').select('*'),
-      supabase.from('pagamentos').select('*'),
-      supabase.from('despesas').select('*'),
-      supabase.from('utilizadores').select('*'),
-      supabase.from('comunicados').select('*'),
-      supabase.from('audit_logs').select('*')
+      fetchAllTableRows('escolas'),
+      fetchAllTableRows('turmas'),
+      fetchAllTableRows('alunos'),
+      fetchAllTableRows('professores'),
+      fetchAllTableRows('pautas'),
+      fetchAllTableRows('pagamentos'),
+      fetchAllTableRows('despesas'),
+      fetchAllTableRows('utilizadores'),
+      fetchAllTableRows('comunicados'),
+      fetchAllTableRows('audit_logs')
     ]);
 
-    if (escolasRes.error || turmasRes.error || alunosRes.error) {
-      console.warn('Nota: Tabelas ainda não inicializadas ou sem acesso no Supabase.');
-      return null;
-    }
-
-    let rawGradesData = pautasRes.data || [];
-    if (pautasRes.error || rawGradesData.length === 0) {
+    let rawGradesData = pautas;
+    if (rawGradesData.length === 0) {
       try {
-        const notasRes = await supabase.from('notas').select('*');
-        if (!notasRes.error && notasRes.data && notasRes.data.length > 0) {
-          rawGradesData = notasRes.data;
+        const rawNotas = await fetchAllTableRows('notas');
+        if (rawNotas.length > 0) {
+          rawGradesData = rawNotas;
         }
       } catch (e) {
         // Ignora se 'notas' também não estiver disponível
@@ -612,7 +622,7 @@ export async function pullFromSupabase() {
     }
 
     return {
-      schools: (escolasRes.data || []).map((s: any) => ({
+      schools: escolas.map((s: any) => ({
         id: s.id,
         name: s.name,
         nif: s.nif,
@@ -629,7 +639,7 @@ export async function pullFromSupabase() {
         anoLectivo: s.ano_lectivo,
         subscription: s.subscription
       })),
-      classes: (turmasRes.data || []).map((c: any) => ({
+      classes: turmas.map((c: any) => ({
         id: c.id,
         name: c.name,
         level: c.level,
@@ -640,7 +650,7 @@ export async function pullFromSupabase() {
         subjects: Array.isArray(c.subjects) ? c.subjects : [],
         schoolId: c.school_id || 's1'
       })),
-      students: (alunosRes.data || []).map((s: any) => ({
+      students: alunos.map((s: any) => ({
         id: s.id,
         name: s.name,
         bi: s.bi || '',
@@ -654,7 +664,7 @@ export async function pullFromSupabase() {
         schoolId: s.school_id || 's1',
         residentialZone: s.residential_zone || ''
       })),
-      teachers: (professoresRes.data || []).map((t: any) => ({
+      teachers: professores.map((t: any) => ({
         id: t.id,
         name: t.name,
         specialization: t.specialization,
@@ -672,7 +682,7 @@ export async function pullFromSupabase() {
         notaExame: g.nota_exame ? parseFloat(g.nota_exame) : undefined,
         schoolId: g.school_id || 's1'
       })),
-      payments: (pagamentosRes.data || []).map((p: any) => ({
+      payments: pagamentos.map((p: any) => ({
         id: p.id,
         studentId: p.student_id,
         month: p.month,
@@ -685,7 +695,7 @@ export async function pullFromSupabase() {
         receiptNumber: p.receipt_number,
         schoolId: p.school_id || 's1'
       })),
-      expenses: (despesasRes.data || []).map((e: any) => ({
+      expenses: despesas.map((e: any) => ({
         id: e.id,
         description: e.description,
         category: e.category,
@@ -694,7 +704,7 @@ export async function pullFromSupabase() {
         receiptNumber: e.receipt_number,
         schoolId: e.school_id || 's1'
       })),
-      users: (utilizadoresRes.data || []).map((u: any) => {
+      users: utilizadores.map((u: any) => {
         let assignedClassIds: string[] = [];
         let assignments: any[] = [];
         let assignedSubjects: string[] = [];
@@ -709,7 +719,7 @@ export async function pullFromSupabase() {
 
         // Cross-reference with teachers if assignments not found
         if (u.role === 'Professor' && assignments.length === 0) {
-          const matchingProf = (professoresRes.data || []).find((p: any) => p.id === u.id || p.name?.toLowerCase() === u.name?.toLowerCase());
+          const matchingProf = professores.find((p: any) => p.id === u.id || p.name?.toLowerCase() === u.name?.toLowerCase());
           if (matchingProf && Array.isArray(matchingProf.assignments)) {
             assignments = matchingProf.assignments;
             if (assignedClassIds.length === 0) {
@@ -734,7 +744,7 @@ export async function pullFromSupabase() {
           studentId: u.student_id
         };
       }),
-      announcements: (comunicadosRes.data || []).map((a: any) => {
+      announcements: comunicados.map((a: any) => {
         let parsedAudience = a.target_audience;
         let targetUserIds: string[] | undefined = undefined;
         let targetRole: string | undefined = undefined;
@@ -760,7 +770,7 @@ export async function pullFromSupabase() {
           schoolId: a.school_id || ''
         };
       }),
-      auditLogs: (auditRes.data || []).map((al: any) => ({
+      auditLogs: auditLogs.map((al: any) => ({
         id: al.id,
         userId: al.user_id,
         userName: al.user_name,
@@ -1408,3 +1418,67 @@ export async function performFullBackup(data: {
     throw err;
   }
 }
+
+/**
+ * Envia uma matrícula individual directamente para o backend (/api/students/enroll)
+ */
+export async function sendStudentEnrollmentToBackend(student: any): Promise<boolean> {
+  try {
+    const res = await fetch('/api/students/enroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ student })
+    });
+    if (res.ok) {
+      console.log(`[Frontend] Matrícula de "${student.name}" enviada e confirmada pelo backend.`);
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Frontend] Backend indisponível para matrícula individual. Recorrendo à sincronização direta:', err);
+  }
+  // Fallback seguro
+  return await pushItemToSupabase({ type: 'CADASTRAR_ALUNO', data: student });
+}
+
+/**
+ * Envia matrícula em massa / importação de alunos directamente para o backend (/api/students/import)
+ */
+export async function sendBulkStudentsToBackend(students: any[]): Promise<boolean> {
+  try {
+    const res = await fetch('/api/students/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ students })
+    });
+    if (res.ok) {
+      console.log(`[Frontend] Importação de ${students.length} alunos enviada e confirmada pelo backend.`);
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Frontend] Backend indisponível para importação em massa. Recorrendo à sincronização direta:', err);
+  }
+  // Fallback seguro
+  return await pushItemToSupabase({ type: 'IMPORTAR_ALUNOS', data: students });
+}
+
+/**
+ * Envia lançamento de notas de pauta directamente para o backend (/api/grades/save)
+ */
+export async function sendGradesToBackend(grades: any[]): Promise<boolean> {
+  try {
+    const res = await fetch('/api/grades/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grades })
+    });
+    if (res.ok) {
+      console.log(`[Frontend] Lançamento de ${grades.length} notas enviado e confirmado pelo backend.`);
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Frontend] Backend indisponível para notas. Recorrendo à sincronização direta:', err);
+  }
+  // Fallback seguro
+  return await pushItemToSupabase({ type: 'ACTUALIZAR_NOTAS', data: grades });
+}
+

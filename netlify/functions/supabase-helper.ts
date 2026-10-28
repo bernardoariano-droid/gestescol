@@ -126,50 +126,64 @@ function mapStudentFromSupabase(s: any) {
   };
 }
 
+// Helper: Fetch all rows across pagination (bypasses PostgREST 1000-row limit)
+async function fetchAllTableRows(table: string, select: string = '*') {
+  let allRows: any[] = [];
+  let from = 0;
+  const pageSize = 1000;
+  while (true) {
+    const { data, error } = await supabase.from(table).select(select).range(from, from + pageSize - 1);
+    if (error) {
+      console.warn(`Aviso ao ler página de ${table}:`, error.message);
+      break;
+    }
+    if (!data || data.length === 0) break;
+    allRows = allRows.concat(data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return allRows;
+}
+
 // Pull complete database data from Supabase
 export async function pullFromSupabase() {
   try {
     const [
-      escolasRes,
-      turmasRes,
-      alunosRes,
-      professoresRes,
-      pautasRes,
-      pagamentosRes,
-      despesasRes,
-      utilizadoresRes,
-      comunicadosRes,
-      auditRes
+      escolas,
+      turmas,
+      alunos,
+      professores,
+      pautas,
+      pagamentos,
+      despesas,
+      utilizadores,
+      comunicados,
+      auditLogs
     ] = await Promise.all([
-      supabase.from('escolas').select('*'),
-      supabase.from('turmas').select('*'),
-      supabase.from('alunos').select('*'),
-      supabase.from('professores').select('*'),
-      supabase.from('pautas').select('*'),
-      supabase.from('pagamentos').select('*'),
-      supabase.from('despesas').select('*'),
-      supabase.from('utilizadores').select('*'),
-      supabase.from('comunicados').select('*'),
-      supabase.from('audit_logs').select('*')
+      fetchAllTableRows('escolas'),
+      fetchAllTableRows('turmas'),
+      fetchAllTableRows('alunos'),
+      fetchAllTableRows('professores'),
+      fetchAllTableRows('pautas'),
+      fetchAllTableRows('pagamentos'),
+      fetchAllTableRows('despesas'),
+      fetchAllTableRows('utilizadores'),
+      fetchAllTableRows('comunicados'),
+      fetchAllTableRows('audit_logs')
     ]);
 
-    if (escolasRes.error || turmasRes.error || alunosRes.error) {
-      console.warn('Nota: Tabelas ainda não inicializadas ou sem acesso no Supabase.');
-      return null;
-    }
-
-    let rawGradesData = pautasRes.data || [];
-    if ((!rawGradesData || rawGradesData.length === 0 || pautasRes.error) && !escolasRes.error) {
+    let rawGradesData = pautas;
+    if (rawGradesData.length === 0) {
       try {
-        const notasRes = await supabase.from('notas').select('*');
-        if (!notasRes.error && notasRes.data && notasRes.data.length > 0) {
-          rawGradesData = notasRes.data;
+        const rawNotas = await fetchAllTableRows('notas');
+        if (rawNotas.length > 0) {
+          rawGradesData = rawNotas;
         }
       } catch (e) {}
     }
 
     return {
-      schools: (escolasRes.data || []).map(s => ({
+      schools: escolas.map(s => ({
         id: s.id,
         name: s.name,
         nif: s.nif,
@@ -186,7 +200,7 @@ export async function pullFromSupabase() {
         anoLectivo: s.ano_lectivo,
         subscription: s.subscription
       })),
-      classes: (turmasRes.data || []).map(c => ({
+      classes: turmas.map(c => ({
         id: c.id,
         name: c.name,
         level: c.level,
@@ -197,8 +211,8 @@ export async function pullFromSupabase() {
         subjects: Array.isArray(c.subjects) ? c.subjects : [],
         schoolId: c.school_id || 's1'
       })),
-      students: (alunosRes.data || []).map(mapStudentFromSupabase),
-      teachers: (professoresRes.data || []).map(t => ({
+      students: alunos.map(mapStudentFromSupabase),
+      teachers: professores.map(t => ({
         id: t.id,
         name: t.name,
         specialization: t.specialization,
@@ -216,7 +230,7 @@ export async function pullFromSupabase() {
         notaExame: g.nota_exame !== null && g.nota_exame !== undefined ? parseFloat(g.nota_exame) : undefined,
         schoolId: g.school_id || 's1'
       })),
-      payments: (pagamentosRes.data || []).map(p => ({
+      payments: pagamentos.map(p => ({
         id: p.id,
         studentId: p.student_id,
         month: p.month,
@@ -229,7 +243,7 @@ export async function pullFromSupabase() {
         receiptNumber: p.receipt_number,
         schoolId: p.school_id || 's1'
       })),
-      expenses: (despesasRes.data || []).map(e => ({
+      expenses: despesas.map(e => ({
         id: e.id,
         description: e.description,
         category: e.category,
@@ -238,7 +252,7 @@ export async function pullFromSupabase() {
         receiptNumber: e.receipt_number,
         schoolId: e.school_id || 's1'
       })),
-      users: (utilizadoresRes.data || []).map(u => {
+      users: utilizadores.map(u => {
         let assignedClassIds: string[] = [];
         let assignments: any[] = [];
         let assignedSubjects: string[] = [];
@@ -252,7 +266,7 @@ export async function pullFromSupabase() {
         }
 
         if (u.role === 'Professor' && assignments.length === 0) {
-          const matchingProf = (professoresRes.data || []).find((p: any) => p.id === u.id || p.name?.toLowerCase() === u.name?.toLowerCase());
+          const matchingProf = professores.find((p: any) => p.id === u.id || p.name?.toLowerCase() === u.name?.toLowerCase());
           if (matchingProf && Array.isArray(matchingProf.assignments)) {
             assignments = matchingProf.assignments;
             if (assignedClassIds.length === 0) {
@@ -277,7 +291,7 @@ export async function pullFromSupabase() {
           studentId: u.student_id
         };
       }),
-      announcements: (comunicadosRes.data || []).map(a => {
+      announcements: comunicados.map(a => {
         let parsedAudience = a.target_audience;
         let targetUserIds: string[] | undefined = undefined;
         let targetRole: string | undefined = undefined;
@@ -303,7 +317,7 @@ export async function pullFromSupabase() {
           schoolId: a.school_id || ''
         };
       }),
-      auditLogs: (auditRes.data || []).map(al => ({
+      auditLogs: auditLogs.map(al => ({
         id: al.id,
         userId: al.user_id,
         userName: al.user_name,

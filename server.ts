@@ -49,10 +49,63 @@ async function startServer() {
         res.status(400).json({ error: "Ação de sincronização em falta." });
         return;
       }
+      console.log(`[BACKEND /api/sync-data] Recebida ação do Frontend: [${action.type}]`);
       await pushItemToSupabase(action);
       res.json({ success: true });
     } catch (error: any) {
+      console.error(`[BACKEND /api/sync-data] Erro:`, error.message || error);
       res.status(500).json({ error: error.message || "Erro ao sincronizar item." });
+    }
+  });
+
+  // Dedicated Backend Route: Matrícula Individual de Aluno
+  app.post("/api/students/enroll", async (req, res) => {
+    try {
+      const { student } = req.body;
+      if (!student || !student.name) {
+        res.status(400).json({ error: "Dados do aluno inválidos ou em falta." });
+        return;
+      }
+      console.log(`[BACKEND] Matrícula individual recebida: "${student.name}" (ID: ${student.id}) | Turma: ${student.classId || 'Sem Turma'}`);
+      await pushItemToSupabase({ type: 'CADASTRAR_ALUNO', data: student });
+      res.json({ success: true, message: "Aluno matriculado com sucesso no backend." });
+    } catch (error: any) {
+      console.error("[BACKEND] Erro na matrícula de aluno:", error.message || error);
+      res.status(500).json({ error: error.message || "Erro ao matricular aluno no backend." });
+    }
+  });
+
+  // Dedicated Backend Route: Matrícula em Massa / Importação de Alunos
+  app.post("/api/students/import", async (req, res) => {
+    try {
+      const { students } = req.body;
+      if (!Array.isArray(students) || students.length === 0) {
+        res.status(400).json({ error: "Lista de alunos em massa vazia ou inválida." });
+        return;
+      }
+      console.log(`[BACKEND] Matrícula em massa recebida: ${students.length} alunos a serem sincronizados.`);
+      await pushItemToSupabase({ type: 'IMPORTAR_ALUNOS', data: students });
+      res.json({ success: true, count: students.length, message: `${students.length} alunos importados com sucesso no backend.` });
+    } catch (error: any) {
+      console.error("[BACKEND] Erro na matrícula em massa:", error.message || error);
+      res.status(500).json({ error: error.message || "Erro ao importar alunos em massa no backend." });
+    }
+  });
+
+  // Dedicated Backend Route: Lançamento e Actualização de Notas (Pautas)
+  app.post("/api/grades/save", async (req, res) => {
+    try {
+      const { grades } = req.body;
+      if (!Array.isArray(grades) || grades.length === 0) {
+        res.status(400).json({ error: "Lista de notas vazia ou inválida." });
+        return;
+      }
+      console.log(`[BACKEND] Lançamento de notas recebido: ${grades.length} registos a serem guardados.`);
+      await pushItemToSupabase({ type: 'ACTUALIZAR_NOTAS', data: grades });
+      res.json({ success: true, count: grades.length, message: `${grades.length} notas sincronizadas com sucesso no backend.` });
+    } catch (error: any) {
+      console.error("[BACKEND] Erro no lançamento de notas:", error.message || error);
+      res.status(500).json({ error: error.message || "Erro ao guardar notas no backend." });
     }
   });
 
