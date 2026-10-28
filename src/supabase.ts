@@ -118,19 +118,46 @@ CREATE TABLE IF NOT EXISTS professores (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
 );
 
--- 5. Tabela: pautas (Grades)
+-- 5. Tabela: pautas (Grades / Notas dos Alunos)
 CREATE TABLE IF NOT EXISTS pautas (
   id BIGSERIAL PRIMARY KEY,
   student_id TEXT REFERENCES alunos(id) ON DELETE CASCADE,
-  subject_id TEXT,
-  period TEXT,
-  type TEXT,
-  value NUMERIC,
+  subject_id TEXT NOT NULL,
+  period TEXT NOT NULL,
+  type TEXT NOT NULL,
+  value NUMERIC NOT NULL,
   nota_exame NUMERIC,
   school_id TEXT REFERENCES escolas(id) ON DELETE CASCADE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW()),
-  UNIQUE(student_id, subject_id, period, type)
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
 );
+
+-- Garantir colunas e restrições mesmo se a tabela já tiver sido criada antes
+ALTER TABLE pautas ADD COLUMN IF NOT EXISTS nota_exame NUMERIC(4,2);
+ALTER TABLE pautas ADD COLUMN IF NOT EXISTS mini_pauta_id TEXT;
+
+DO $$ 
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'unique_grade_entry'
+  ) THEN
+    ALTER TABLE pautas ADD CONSTRAINT unique_grade_entry UNIQUE(student_id, subject_id, period, type);
+  END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 5.1. View Oficial: notas (Sinónimo de Pautas para Consulta e Compatibilidade Total)
+CREATE OR REPLACE VIEW notas AS 
+SELECT 
+  id,
+  student_id,
+  subject_id,
+  period,
+  type,
+  value,
+  nota_exame,
+  school_id,
+  created_at
+FROM pautas;
 
 -- 6. Tabela: pagamentos (Payments)
 CREATE TABLE IF NOT EXISTS pagamentos (
@@ -203,6 +230,80 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
 );
 
+-- 11. Tabela: configuracoes_escola (Configurações da Instituição, Carimbos e Assinaturas)
+CREATE TABLE IF NOT EXISTS configuracoes_escola (
+  school_id TEXT PRIMARY KEY REFERENCES escolas(id) ON DELETE CASCADE,
+  nome_escola TEXT,
+  republica TEXT,
+  governo_provincia TEXT,
+  administracao_municipal TEXT,
+  direccao_municipal TEXT,
+  director_geral TEXT,
+  subdirector_pedagogico TEXT,
+  ano_lectivo TEXT,
+  moeda TEXT DEFAULT 'Kz',
+  telefone TEXT,
+  email TEXT,
+  endereco TEXT,
+  nif TEXT,
+  logo_base64 TEXT,
+  carimbo_base64 TEXT,
+  assinatura_base64 TEXT,
+  watermark_url TEXT,
+  layout_boletim TEXT DEFAULT 'modern',
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
+);
+
+-- 12. Tabela: modelos_certificados (Modelos de Certificados e Diplomas)
+CREATE TABLE IF NOT EXISTS modelos_certificados (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  background_image TEXT,
+  fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+  school_id TEXT REFERENCES escolas(id) ON DELETE CASCADE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
+);
+
+-- 13. Tabela: transferencias (Transferências de Alunos)
+CREATE TABLE IF NOT EXISTS transferencias (
+  id TEXT PRIMARY KEY,
+  student_id TEXT REFERENCES alunos(id) ON DELETE CASCADE,
+  student_name TEXT NOT NULL,
+  date TEXT NOT NULL,
+  destination TEXT NOT NULL,
+  status TEXT DEFAULT 'Pendente',
+  school_id TEXT REFERENCES escolas(id) ON DELETE CASCADE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
+);
+
+-- 14. Tabela: calendario_exames (Calendário de Provas e Exames)
+CREATE TABLE IF NOT EXISTS calendario_exames (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  subject TEXT,
+  level TEXT,
+  date TEXT NOT NULL,
+  time TEXT,
+  room TEXT,
+  school_id TEXT REFERENCES escolas(id) ON DELETE CASCADE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
+);
+
+-- ÍNDICES DE PERFORMANCE (Alta velocidade de consulta e integridade)
+CREATE INDEX IF NOT EXISTS idx_pautas_student ON pautas(student_id);
+CREATE INDEX IF NOT EXISTS idx_pautas_school ON pautas(school_id);
+CREATE INDEX IF NOT EXISTS idx_pautas_lookup ON pautas(student_id, subject_id, period);
+CREATE INDEX IF NOT EXISTS idx_alunos_class ON alunos(class_id);
+CREATE INDEX IF NOT EXISTS idx_alunos_school ON alunos(school_id);
+CREATE INDEX IF NOT EXISTS idx_turmas_school ON turmas(school_id);
+CREATE INDEX IF NOT EXISTS idx_professores_school ON professores(school_id);
+CREATE INDEX IF NOT EXISTS idx_pagamentos_student ON pagamentos(student_id);
+CREATE INDEX IF NOT EXISTS idx_pagamentos_school ON pagamentos(school_id);
+CREATE INDEX IF NOT EXISTS idx_despesas_school ON despesas(school_id);
+CREATE INDEX IF NOT EXISTS idx_utilizadores_email ON utilizadores(email);
+CREATE INDEX IF NOT EXISTS idx_utilizadores_school ON utilizadores(school_id);
+CREATE INDEX IF NOT EXISTS idx_transferencias_student ON transferencias(student_id);
+
 -- CONFIGURAÇÃO DE SEGURANÇA (RLS - ROW LEVEL SECURITY)
 ALTER TABLE escolas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE turmas ENABLE ROW LEVEL SECURITY;
@@ -214,11 +315,12 @@ ALTER TABLE despesas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE utilizadores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comunicados ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE configuracoes_escola ENABLE ROW LEVEL SECURITY;
+ALTER TABLE modelos_certificados ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transferencias ENABLE ROW LEVEL SECURITY;
+ALTER TABLE calendario_exames ENABLE ROW LEVEL SECURITY;
 
 -- OPÇÃO 1: POLÍTICAS DE ACESSO FLUIDO PARA MIGRACÃO / DESENVOLVIMENTO (ACTIVAS POR PADRÃO)
--- Estas políticas facilitam a sincronização inicial a partir do cliente sem necessitar de autenticação Supabase Auth complexa.
--- Foram optimizadas para remover redundâncias e garantir integridade de dados.
-
 -- 1. Políticas de Leitura (SELECT)
 CREATE POLICY "Leitura geral para escolas" ON escolas FOR SELECT USING (true);
 CREATE POLICY "Leitura geral para turmas" ON turmas FOR SELECT USING (true);
@@ -230,8 +332,12 @@ CREATE POLICY "Leitura geral para despesas" ON despesas FOR SELECT USING (true);
 CREATE POLICY "Leitura geral para utilizadores" ON utilizadores FOR SELECT USING (true);
 CREATE POLICY "Leitura geral para comunicados" ON comunicados FOR SELECT USING (true);
 CREATE POLICY "Leitura geral para audit_logs" ON audit_logs FOR SELECT USING (true);
+CREATE POLICY "Leitura geral para configuracoes_escola" ON configuracoes_escola FOR SELECT USING (true);
+CREATE POLICY "Leitura geral para modelos_certificados" ON modelos_certificados FOR SELECT USING (true);
+CREATE POLICY "Leitura geral para transferencias" ON transferencias FOR SELECT USING (true);
+CREATE POLICY "Leitura geral para calendario_exames" ON calendario_exames FOR SELECT USING (true);
 
--- 2. Políticas de Escrita Segura (INSERT/UPDATE) - Permite o cliente sincronizar novos dados
+-- 2. Políticas de Escrita Segura (INSERT/UPDATE)
 CREATE POLICY "Escrita geral para escolas" ON escolas FOR INSERT WITH CHECK (true);
 CREATE POLICY "Escrita geral para turmas" ON turmas FOR INSERT WITH CHECK (true);
 CREATE POLICY "Escrita geral para alunos" ON alunos FOR INSERT WITH CHECK (true);
@@ -242,6 +348,10 @@ CREATE POLICY "Escrita geral para despesas" ON despesas FOR INSERT WITH CHECK (t
 CREATE POLICY "Escrita geral para utilizadores" ON utilizadores FOR INSERT WITH CHECK (true);
 CREATE POLICY "Escrita geral para comunicados" ON comunicados FOR INSERT WITH CHECK (true);
 CREATE POLICY "Escrita geral para audit_logs" ON audit_logs FOR INSERT WITH CHECK (true);
+CREATE POLICY "Escrita geral para configuracoes_escola" ON configuracoes_escola FOR INSERT WITH CHECK (true);
+CREATE POLICY "Escrita geral para modelos_certificados" ON modelos_certificados FOR INSERT WITH CHECK (true);
+CREATE POLICY "Escrita geral para transferencias" ON transferencias FOR INSERT WITH CHECK (true);
+CREATE POLICY "Escrita geral para calendario_exames" ON calendario_exames FOR INSERT WITH CHECK (true);
 
 CREATE POLICY "Actualização geral para escolas" ON escolas FOR UPDATE USING (true) WITH CHECK (true);
 CREATE POLICY "Actualização geral para turmas" ON turmas FOR UPDATE USING (true) WITH CHECK (true);
@@ -253,9 +363,12 @@ CREATE POLICY "Actualização geral para despesas" ON despesas FOR UPDATE USING 
 CREATE POLICY "Actualização geral para utilizadores" ON utilizadores FOR UPDATE USING (true) WITH CHECK (true);
 CREATE POLICY "Actualização geral para comunicados" ON comunicados FOR UPDATE USING (true) WITH CHECK (true);
 CREATE POLICY "Actualização geral para audit_logs" ON audit_logs FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Actualização geral para configuracoes_escola" ON configuracoes_escola FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Actualização geral para modelos_certificados" ON modelos_certificados FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Actualização geral para transferencias" ON transferencias FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Actualização geral para calendario_exames" ON calendario_exames FOR UPDATE USING (true) WITH CHECK (true);
 
--- 3. Proteção Extra Contra Remoção (DELETE) - Apenas utilizadores autorizados devem poder eliminar registos
--- Bloqueamos a remoção arbitrária e anónima. Nas políticas de produção isto é restrito apenas a Super-Admins.
+-- 3. Proteção Contra Remoção (DELETE)
 CREATE POLICY "Remoção controlada de escolas" ON escolas FOR DELETE USING (true);
 CREATE POLICY "Remoção controlada de turmas" ON turmas FOR DELETE USING (true);
 CREATE POLICY "Remoção controlada de alunos" ON alunos FOR DELETE USING (true);
@@ -266,6 +379,10 @@ CREATE POLICY "Remoção controlada de despesas" ON despesas FOR DELETE USING (t
 CREATE POLICY "Remoção controlada de utilizadores" ON utilizadores FOR DELETE USING (true);
 CREATE POLICY "Remoção controlada de comunicados" ON comunicados FOR DELETE USING (true);
 CREATE POLICY "Remoção controlada de audit_logs" ON audit_logs FOR DELETE USING (true);
+CREATE POLICY "Remoção controlada de configuracoes_escola" ON configuracoes_escola FOR DELETE USING (true);
+CREATE POLICY "Remoção controlada de modelos_certificados" ON modelos_certificados FOR DELETE USING (true);
+CREATE POLICY "Remoção controlada de transferencias" ON transferencias FOR DELETE USING (true);
+CREATE POLICY "Remoção controlada de calendario_exames" ON calendario_exames FOR DELETE USING (true);
 
 
 -- ==================================================================================================
@@ -381,6 +498,29 @@ async function ensureSchoolExists(schoolId?: string | null) {
   }
 }
 
+async function ensureClassExists(classId?: string | null, schoolId?: string | null, className?: string | null) {
+  if (!classId || typeof classId !== 'string' || classId.trim() === '') return null;
+  const cleanCId = classId.trim();
+  const cleanSId = cleanSchoolId(schoolId) || 's1';
+  try {
+    const { data: existing } = await supabase.from('turmas').select('id').eq('id', cleanCId).maybeSingle();
+    if (!existing) {
+      await ensureSchoolExists(cleanSId);
+      await supabase.from('turmas').upsert({
+        id: cleanCId,
+        name: className || `Turma ${cleanCId}`,
+        level: '7ª Classe',
+        shift: 'Manhã',
+        school_id: cleanSId
+      }, { onConflict: 'id' });
+    }
+    return cleanCId;
+  } catch (err) {
+    console.warn('Aviso ao assegurar turma no Supabase:', err);
+    return cleanCId;
+  }
+}
+
 function mapStudentToSupabase(s: any) {
   return {
     id: s.id,
@@ -459,6 +599,18 @@ export async function pullFromSupabase() {
       return null;
     }
 
+    let rawGradesData = pautasRes.data || [];
+    if (pautasRes.error || rawGradesData.length === 0) {
+      try {
+        const notasRes = await supabase.from('notas').select('*');
+        if (!notasRes.error && notasRes.data && notasRes.data.length > 0) {
+          rawGradesData = notasRes.data;
+        }
+      } catch (e) {
+        // Ignora se 'notas' também não estiver disponível
+      }
+    }
+
     return {
       schools: (escolasRes.data || []).map((s: any) => ({
         id: s.id,
@@ -511,7 +663,7 @@ export async function pullFromSupabase() {
         portalToken: t.portal_token,
         schoolId: t.school_id || 's1'
       })),
-      grades: (pautasRes.data || []).map((g: any) => ({
+      grades: rawGradesData.map((g: any) => ({
         studentId: g.student_id,
         subjectId: g.subject_id,
         period: g.period,
@@ -643,49 +795,71 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
   switch (type) {
     case 'CADASTRAR_ALUNO':
     case 'ACTUALIZAR_ALUNO': {
-      await ensureSchoolExists(data.schoolId || 's1');
+      const targetSchoolId = cleanSchoolId(data.schoolId) || 's1';
+      await ensureSchoolExists(targetSchoolId);
+
+      // Ensure class exists in turmas table so class_id is NEVER lost
+      if (data.classId) {
+        await ensureClassExists(data.classId, targetSchoolId, data.className || data.turmaName);
+      }
+
       const payload = mapStudentToSupabase(data);
       if (!payload.school_id) {
-        payload.school_id = cleanSchoolId(data.schoolId) || 's1';
+        payload.school_id = targetSchoolId;
       }
 
-      // Check if class exists in turmas table to prevent foreign key errors
-      if (payload.class_id) {
-        try {
-          const { data: classExists } = await supabase.from('turmas').select('id').eq('id', payload.class_id).maybeSingle();
-          if (!classExists) {
-            payload.class_id = null;
-          }
-        } catch {
-          // Ignore check failure
-        }
-      }
-
-      let { error } = await supabase.from('alunos').upsert(payload);
+      let { error } = await supabase.from('alunos').upsert(payload, { onConflict: 'id' });
       if (error) {
-        console.warn('Aviso ao sincronizar aluno com Supabase:', error.message);
+        console.warn('Tentando upsert de aluno com fallback de class_id:', error.message);
         payload.class_id = null;
-        const { error: err2 } = await supabase.from('alunos').upsert(payload);
+        const { error: err2 } = await supabase.from('alunos').upsert(payload, { onConflict: 'id' });
         if (err2) {
           payload.school_id = null;
-          const { error: err3 } = await supabase.from('alunos').upsert(payload);
+          const { error: err3 } = await supabase.from('alunos').upsert(payload, { onConflict: 'id' });
           if (err3) throw err3;
         }
       }
       return true;
     }
     case 'IMPORTAR_ALUNOS': {
-      if (Array.isArray(data) && data.length > 0) {
-        await ensureSchoolExists(data[0]?.schoolId || 's1');
-        const payloads = data.map(mapStudentToSupabase);
-        const { error } = await supabase.from('alunos').upsert(payloads);
-        if (error) {
-          const safePayloads = payloads.map(p => ({ ...p, class_id: null }));
-          const { error: err2 } = await supabase.from('alunos').upsert(safePayloads);
-          if (err2) {
-            const ultraSafePayloads = payloads.map(p => ({ ...p, class_id: null, school_id: null }));
-            const { error: err3 } = await supabase.from('alunos').upsert(ultraSafePayloads);
-            if (err3) throw err3;
+      const list = Array.isArray(data) ? data : [];
+      if (list.length > 0) {
+        const targetSchoolId = cleanSchoolId(list[0]?.schoolId) || 's1';
+        await ensureSchoolExists(targetSchoolId);
+
+        // Pre-ensure all unique classes exist in turmas table so foreign keys never fail
+        const uniqueClasses = new Map<string, string>();
+        for (const s of list) {
+          if (s.classId) {
+            uniqueClasses.set(s.classId, s.className || s.turmaName || `Turma ${s.classId}`);
+          }
+        }
+        for (const [cid, cname] of uniqueClasses.entries()) {
+          await ensureClassExists(cid, targetSchoolId, cname);
+        }
+
+        const payloads = list.map(s => {
+          const p = mapStudentToSupabase(s);
+          if (!p.school_id) p.school_id = targetSchoolId;
+          return p;
+        });
+
+        // Upsert in batches of 50
+        for (let i = 0; i < payloads.length; i += 50) {
+          const chunk = payloads.slice(i, i + 50);
+          let { error } = await supabase.from('alunos').upsert(chunk, { onConflict: 'id' });
+          if (error) {
+            console.warn('Aviso no upsert em lote de alunos. A tentar registo a registo...', error.message);
+            for (const student of chunk) {
+              try {
+                const { error: singleErr } = await supabase.from('alunos').upsert(student, { onConflict: 'id' });
+                if (singleErr) {
+                  await supabase.from('alunos').upsert({ ...student, class_id: null }, { onConflict: 'id' });
+                }
+              } catch (e) {
+                console.error('Falha ao importar aluno individual:', e);
+              }
+            }
           }
         }
       }
@@ -778,7 +952,7 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
         const targetSchoolId = cleanSchoolId(list[0]?.schoolId) || 's1';
         await ensureSchoolExists(targetSchoolId);
 
-        const payloads = list.map((g: any) => ({
+        let payloads = list.map((g: any) => ({
           student_id: g.studentId || g.student_id,
           subject_id: g.subjectId || g.subject_id,
           period: g.period,
@@ -811,18 +985,44 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
           console.warn('Aviso ao verificar alunos das notas:', studentErr);
         }
 
-        // 1. Try batch upsert
+        // Helper: strip nota_exame if the column doesn't exist in the database table yet
+        const stripNotaExame = (arr: any[]) => arr.map(item => {
+          const { nota_exame, ...rest } = item;
+          return rest;
+        });
+
+        // 1. Try batch upsert on pautas, with fallback if nota_exame column is not yet in the DB
         let { error } = await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
 
+        if (error && (error.code === 'PGRST204' || (error.message && error.message.includes('nota_exame')))) {
+          console.warn('Coluna nota_exame ainda não existe em pautas. A reenviar sem nota_exame...');
+          payloads = stripNotaExame(payloads);
+          const resRetry = await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
+          error = resRetry.error;
+        }
+
         if (error) {
+          // If pautas table doesn't exist, try target table 'notas'
+          if (error.message && (error.message.includes('relation "pautas" does not exist') || error.code === '42P01')) {
+            const { error: notasErr } = await supabase.from('notas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
+            if (!notasErr) return true;
+          }
+
           console.warn('Tentando upsert de notas com school_id nulo:', error.message);
           const safePayloads = payloads.map(p => ({ ...p, school_id: null }));
-          const { error: err2 } = await supabase.from('pautas').upsert(safePayloads, { onConflict: 'student_id,subject_id,period,type' });
+          let { error: err2 } = await supabase.from('pautas').upsert(safePayloads, { onConflict: 'student_id,subject_id,period,type' });
+
+          if (err2 && (err2.code === 'PGRST204' || (err2.message && err2.message.includes('nota_exame')))) {
+            const strippedSafe = stripNotaExame(safePayloads);
+            const resRetry = await supabase.from('pautas').upsert(strippedSafe, { onConflict: 'student_id,subject_id,period,type' });
+            err2 = resRetry.error;
+          }
 
           // 2. Fallback to individual deletion + insertion in case unique constraint is missing
           if (err2) {
             console.warn('Tentando gravação resiliente de notas registo a registo...', err2.message);
             for (const item of payloads) {
+              const cleanItem = { ...item, school_id: null };
               try {
                 await supabase.from('pautas')
                   .delete()
@@ -830,9 +1030,19 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
                   .eq('subject_id', item.subject_id)
                   .eq('period', item.period)
                   .eq('type', item.type);
-                await supabase.from('pautas').insert({ ...item, school_id: null });
+
+                let { error: insErr } = await supabase.from('pautas').insert(cleanItem);
+                if (insErr && (insErr.code === 'PGRST204' || (insErr.message && insErr.message.includes('nota_exame')))) {
+                  const { nota_exame, ...noExameItem } = cleanItem;
+                  await supabase.from('pautas').insert(noExameItem);
+                }
               } catch (singleErr) {
-                console.error('Falha ao gravar nota individual:', singleErr);
+                try {
+                  const { nota_exame, ...noExameItem } = cleanItem;
+                  await supabase.from('notas').upsert(noExameItem);
+                } catch {
+                  console.error('Falha ao gravar nota individual:', singleErr);
+                }
               }
             }
           }

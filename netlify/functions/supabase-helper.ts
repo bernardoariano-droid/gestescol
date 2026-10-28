@@ -52,6 +52,29 @@ async function ensureSchoolExists(schoolId?: string | null) {
   }
 }
 
+async function ensureClassExists(classId?: string | null, schoolId?: string | null, className?: string | null) {
+  if (!classId || typeof classId !== 'string' || classId.trim() === '') return null;
+  const cleanCId = classId.trim();
+  const cleanSId = cleanSchoolId(schoolId) || 's1';
+  try {
+    const { data: existing } = await supabase.from('turmas').select('id').eq('id', cleanCId).maybeSingle();
+    if (!existing) {
+      await ensureSchoolExists(cleanSId);
+      await supabase.from('turmas').upsert({
+        id: cleanCId,
+        name: className || `Turma ${cleanCId}`,
+        level: '7ª Classe',
+        shift: 'Manhã',
+        school_id: cleanSId
+      }, { onConflict: 'id' });
+    }
+    return cleanCId;
+  } catch (err) {
+    console.warn('Aviso ao assegurar turma no Supabase:', err);
+    return cleanCId;
+  }
+}
+
 // Helper: Test Supabase connection
 export async function testConnection(): Promise<boolean> {
   try {
@@ -135,6 +158,16 @@ export async function pullFromSupabase() {
       return null;
     }
 
+    let rawGradesData = pautasRes.data || [];
+    if ((!rawGradesData || rawGradesData.length === 0 || pautasRes.error) && !escolasRes.error) {
+      try {
+        const notasRes = await supabase.from('notas').select('*');
+        if (!notasRes.error && notasRes.data && notasRes.data.length > 0) {
+          rawGradesData = notasRes.data;
+        }
+      } catch (e) {}
+    }
+
     return {
       schools: (escolasRes.data || []).map(s => ({
         id: s.id,
@@ -174,7 +207,7 @@ export async function pullFromSupabase() {
         portalToken: t.portal_token,
         schoolId: t.school_id || 's1'
       })),
-      grades: (pautasRes.data || []).map(g => ({
+      grades: rawGradesData.map(g => ({
         studentId: g.student_id,
         subjectId: g.subject_id,
         period: g.period,
@@ -205,19 +238,45 @@ export async function pullFromSupabase() {
         receiptNumber: e.receipt_number,
         schoolId: e.school_id || 's1'
       })),
-      users: (utilizadoresRes.data || []).map(u => ({
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        password: u.password,
-        role: u.role,
-        status: u.status,
-        lastLogin: u.last_login,
-        schoolId: u.school_id || '',
-        assignedClassIds: Array.isArray(u.assigned_class_ids) ? u.assigned_class_ids : [],
-        avatarUrl: u.avatar_url,
-        studentId: u.student_id
-      })),
+      users: (utilizadoresRes.data || []).map(u => {
+        let assignedClassIds: string[] = [];
+        let assignments: any[] = [];
+        let assignedSubjects: string[] = [];
+
+        if (Array.isArray(u.assigned_class_ids)) {
+          assignedClassIds = u.assigned_class_ids;
+        } else if (u.assigned_class_ids && typeof u.assigned_class_ids === 'object') {
+          assignedClassIds = u.assigned_class_ids.classIds || u.assigned_class_ids.assignedClassIds || [];
+          assignments = u.assigned_class_ids.assignments || [];
+          assignedSubjects = u.assigned_class_ids.assignedSubjects || [];
+        }
+
+        if (u.role === 'Professor' && assignments.length === 0) {
+          const matchingProf = (professoresRes.data || []).find((p: any) => p.id === u.id || p.name?.toLowerCase() === u.name?.toLowerCase());
+          if (matchingProf && Array.isArray(matchingProf.assignments)) {
+            assignments = matchingProf.assignments;
+            if (assignedClassIds.length === 0) {
+              assignedClassIds = Array.from(new Set(matchingProf.assignments.map((a: any) => a.classId)));
+            }
+          }
+        }
+
+        return {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          password: u.password,
+          role: u.role,
+          status: u.status,
+          lastLogin: u.last_login,
+          schoolId: u.school_id || '',
+          assignedClassIds,
+          assignments: assignments.length > 0 ? assignments : undefined,
+          assignedSubjects: assignedSubjects.length > 0 ? assignedSubjects : undefined,
+          avatarUrl: u.avatar_url,
+          studentId: u.student_id
+        };
+      }),
       announcements: (comunicadosRes.data || []).map(a => {
         let parsedAudience = a.target_audience;
         let targetUserIds: string[] | undefined = undefined;
@@ -269,48 +328,71 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
     switch (type) {
       case 'CADASTRAR_ALUNO':
       case 'ACTUALIZAR_ALUNO': {
-        await ensureSchoolExists(data.schoolId || 's1');
+        const targetSchoolId = cleanSchoolId(data.schoolId) || 's1';
+        await ensureSchoolExists(targetSchoolId);
+        
+        // Ensure class exists in turmas table so class_id is NEVER lost
+        if (data.classId) {
+          await ensureClassExists(data.classId, targetSchoolId, data.className || data.turmaName);
+        }
+
         const payload = mapStudentToSupabase(data);
         if (!payload.school_id) {
-          payload.school_id = cleanSchoolId(data.schoolId) || 's1';
+          payload.school_id = targetSchoolId;
         }
 
-        if (payload.class_id) {
-          try {
-            const { data: classExists } = await supabase.from('turmas').select('id').eq('id', payload.class_id).maybeSingle();
-            if (!classExists) {
-              payload.class_id = null;
-            }
-          } catch {
-            // Continue
-          }
-        }
-
-        let { error } = await supabase.from('alunos').upsert(payload);
+        let { error } = await supabase.from('alunos').upsert(payload, { onConflict: 'id' });
         if (error) {
-          console.warn('Aviso ao sincronizar aluno com Supabase:', error.message);
+          console.warn('Tentando upsert de aluno com fallback de class_id:', error.message);
           payload.class_id = null;
-          const { error: err2 } = await supabase.from('alunos').upsert(payload);
+          const { error: err2 } = await supabase.from('alunos').upsert(payload, { onConflict: 'id' });
           if (err2) {
             payload.school_id = null;
-            const { error: err3 } = await supabase.from('alunos').upsert(payload);
+            const { error: err3 } = await supabase.from('alunos').upsert(payload, { onConflict: 'id' });
             if (err3) throw err3;
           }
         }
         break;
       }
       case 'IMPORTAR_ALUNOS': {
-        if (Array.isArray(data) && data.length > 0) {
-          await ensureSchoolExists(data[0]?.schoolId || 's1');
-          const payloads = data.map(mapStudentToSupabase);
-          const { error } = await supabase.from('alunos').upsert(payloads);
-          if (error) {
-            const safePayloads = payloads.map(p => ({ ...p, class_id: null }));
-            const { error: err2 } = await supabase.from('alunos').upsert(safePayloads);
-            if (err2) {
-              const ultraSafePayloads = payloads.map(p => ({ ...p, class_id: null, school_id: null }));
-              const { error: err3 } = await supabase.from('alunos').upsert(ultraSafePayloads);
-              if (err3) throw err3;
+        const list = Array.isArray(data) ? data : [];
+        if (list.length > 0) {
+          const targetSchoolId = cleanSchoolId(list[0]?.schoolId) || 's1';
+          await ensureSchoolExists(targetSchoolId);
+
+          // Pre-ensure all unique classes exist in turmas table so foreign keys never fail
+          const uniqueClasses = new Map<string, string>();
+          for (const s of list) {
+            if (s.classId) {
+              uniqueClasses.set(s.classId, s.className || s.turmaName || `Turma ${s.classId}`);
+            }
+          }
+          for (const [cid, cname] of uniqueClasses.entries()) {
+            await ensureClassExists(cid, targetSchoolId, cname);
+          }
+
+          const payloads = list.map(s => {
+            const p = mapStudentToSupabase(s);
+            if (!p.school_id) p.school_id = targetSchoolId;
+            return p;
+          });
+
+          // Upsert in batches of 50
+          for (let i = 0; i < payloads.length; i += 50) {
+            const chunk = payloads.slice(i, i + 50);
+            let { error } = await supabase.from('alunos').upsert(chunk, { onConflict: 'id' });
+            if (error) {
+              console.warn('Aviso no upsert em lote de alunos. A tentar registo a registo...', error.message);
+              for (const student of chunk) {
+                try {
+                  const { error: singleErr } = await supabase.from('alunos').upsert(student, { onConflict: 'id' });
+                  if (singleErr) {
+                    await supabase.from('alunos').upsert({ ...student, class_id: null }, { onConflict: 'id' });
+                  }
+                } catch (e) {
+                  console.error('Falha ao importar aluno individual:', e);
+                }
+              }
             }
           }
         }
@@ -402,15 +484,22 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
           const targetSchoolId = cleanSchoolId(list[0]?.schoolId) || 's1';
           await ensureSchoolExists(targetSchoolId);
 
-          const payloads = list.map((g: any) => ({
-            student_id: g.studentId || g.student_id,
-            subject_id: g.subjectId || g.subject_id,
-            period: g.period,
-            type: g.type,
-            value: typeof g.value === 'number' ? g.value : parseFloat(g.value || '0'),
-            nota_exame: g.notaExame !== undefined ? g.notaExame : (g.nota_exame !== undefined ? g.nota_exame : (g.type === 'Exame' || g.period === 'Exame' ? g.value : null)),
-            school_id: cleanSchoolId(g.schoolId || g.school_id) || targetSchoolId
-          })).filter(p => p.student_id && p.subject_id && p.period && p.type);
+          const payloads = list.map((g: any) => {
+            const item: any = {
+              student_id: g.studentId || g.student_id,
+              subject_id: g.subjectId || g.subject_id,
+              period: g.period,
+              type: g.type,
+              value: typeof g.value === 'number' ? g.value : parseFloat(g.value || '0'),
+              school_id: cleanSchoolId(g.schoolId || g.school_id) || targetSchoolId
+            };
+            if (g.notaExame !== undefined && g.notaExame !== null) {
+              item.nota_exame = typeof g.notaExame === 'number' ? g.notaExame : parseFloat(g.notaExame);
+            } else if (g.nota_exame !== undefined && g.nota_exame !== null) {
+              item.nota_exame = typeof g.nota_exame === 'number' ? g.nota_exame : parseFloat(g.nota_exame);
+            }
+            return item;
+          }).filter(p => p.student_id && p.subject_id && p.period && p.type);
 
           if (payloads.length === 0) break;
 
@@ -435,26 +524,37 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
             console.warn('Aviso ao verificar alunos das notas:', studentErr);
           }
 
-          // 1. Try batch upsert
+          // 1. Try batch upsert on pautas
           let { error } = await supabase.from('pautas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
 
+          // If error indicates 'nota_exame' column does not exist, retry without nota_exame!
+          if (error && error.message && error.message.includes('nota_exame')) {
+            const cleanPayloads = payloads.map(({ nota_exame, ...rest }) => rest);
+            const resClean = await supabase.from('pautas').upsert(cleanPayloads, { onConflict: 'student_id,subject_id,period,type' });
+            error = resClean.error;
+          }
+
           if (error) {
+            // Also try on 'notas' table/view if pautas doesn't exist
+            if (error.message && (error.message.includes('relation "pautas" does not exist') || error.code === '42P01')) {
+              const { error: notasErr } = await supabase.from('notas').upsert(payloads, { onConflict: 'student_id,subject_id,period,type' });
+              if (!notasErr) break;
+            }
+
             console.warn('Tentando upsert de notas com school_id nulo:', error.message);
-            const safePayloads = payloads.map(p => ({ ...p, school_id: null }));
+            const safePayloads = payloads.map(p => {
+              const { nota_exame, ...rest } = p;
+              return { ...rest, school_id: null };
+            });
             const { error: err2 } = await supabase.from('pautas').upsert(safePayloads, { onConflict: 'student_id,subject_id,period,type' });
 
-            // 2. Fallback to individual deletion + insertion in case unique constraint is missing
+            // 2. Fallback to individual insertion
             if (err2) {
               console.warn('Tentando gravação resiliente de notas registo a registo...', err2.message);
               for (const item of payloads) {
                 try {
-                  await supabase.from('pautas')
-                    .delete()
-                    .eq('student_id', item.student_id)
-                    .eq('subject_id', item.subject_id)
-                    .eq('period', item.period)
-                    .eq('type', item.type);
-                  await supabase.from('pautas').insert({ ...item, school_id: null });
+                  const { nota_exame, ...cleanItem } = item;
+                  await supabase.from('pautas').upsert({ ...cleanItem, school_id: null }, { onConflict: 'student_id,subject_id,period,type' });
                 } catch (singleErr) {
                   console.error('Falha ao gravar nota individual:', singleErr);
                 }
@@ -542,7 +642,11 @@ export async function pushItemToSupabase(action: { type: string; data: any }) {
           status: data.status || 'Activo',
           last_login: data.lastLogin || null,
           school_id: cleanSchoolId(data.schoolId),
-          assigned_class_ids: data.assignedClassIds || [],
+          assigned_class_ids: (data.assignments && data.assignments.length > 0) ? {
+            classIds: data.assignedClassIds || [],
+            assignments: data.assignments || [],
+            assignedSubjects: data.assignedSubjects || []
+          } : (data.assignedClassIds || []),
           avatar_url: data.avatarUrl || null,
           student_id: data.studentId || null
         };
@@ -818,7 +922,11 @@ export async function performFullBackup(data: {
         status: u.status,
         last_login: u.lastLogin || null,
         school_id: cleanSchoolId(u.schoolId),
-        assigned_class_ids: u.assignedClassIds || [],
+        assigned_class_ids: (u.assignments && u.assignments.length > 0) ? {
+          classIds: u.assignedClassIds || [],
+          assignments: u.assignments,
+          assignedSubjects: u.assignedSubjects || []
+        } : (u.assignedClassIds || []),
         avatar_url: u.avatarUrl || null,
         student_id: u.studentId || null
       }));
