@@ -1861,7 +1861,9 @@ export default function App() {
     };
   });
 
-  const currentSchoolId = selectedSchoolId || currentUser?.schoolId || 'all';
+  const currentSchoolId = currentUser?.role === 'Super-Administrador'
+    ? selectedSchoolId
+    : (currentUser?.schoolId || schools[0]?.id || 's1');
 
   const currentSchool = useMemo(() => {
     if (currentSchoolId === 'all') return schools.find(s => s.id === 's_2ts520h0z') || schools[0];
@@ -1889,37 +1891,103 @@ export default function App() {
   }, [currentSchool]);
 
   const isSingleSchool = schools.length <= 1;
-  const filteredStudents = useMemo(() => 
-    students.filter(s => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !s.schoolId || s.schoolId === currentSchoolId),
-    [students, currentSchoolId, isSingleSchool]
-  );
-  const filteredClasses = useMemo(() => 
-    classes.filter(c => 
-      (isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !c.schoolId || c.schoolId === currentSchoolId) &&
-      (currentUser?.role !== 'Professor' || !currentUser.assignedClassIds?.length || currentUser.assignedClassIds?.includes(c.id))
-    ),
-    [classes, currentSchoolId, isSingleSchool, currentUser]
-  );
-  const filteredTeachers = useMemo(() => 
-    teachers.filter(t => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !t.schoolId || t.schoolId === currentSchoolId),
-    [teachers, currentSchoolId, isSingleSchool]
-  );
-  const filteredPayments = useMemo(() => 
-    payments.filter(p => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !p.schoolId || p.schoolId === currentSchoolId),
-    [payments, currentSchoolId, isSingleSchool]
-  );
-  const filteredExpenses = useMemo(() => 
-    expenses.filter(e => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !e.schoolId || e.schoolId === currentSchoolId),
-    [expenses, currentSchoolId, isSingleSchool]
-  );
-  const filteredGrades = useMemo(() => 
-    grades.filter(g => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !g.schoolId || g.schoolId === currentSchoolId),
-    [grades, currentSchoolId, isSingleSchool]
-  );
-  const filteredTemplates = useMemo(() => 
-    templates.filter(t => isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !t.schoolId || t.schoolId === currentSchoolId),
-    [templates, currentSchoolId, isSingleSchool]
-  );
+
+  // 1. Alunos: Administradores só vêem a sua escola; Professores só vêem turmas atribuídas
+  const filteredStudents = useMemo(() => {
+    if (currentUser?.role === 'Professor') {
+      const assigned = currentUser.assignedClassIds || [];
+      if (assigned.length === 0) return [];
+      return students.filter(s => s.classId && assigned.includes(s.classId));
+    }
+    if (currentUser?.role !== 'Super-Administrador') {
+      const targetSchool = currentUser?.schoolId || currentSchoolId;
+      return students.filter(s => (s.schoolId || 's1') === targetSchool);
+    }
+    if (!currentSchoolId || currentSchoolId === 'all') {
+      return students;
+    }
+    return students.filter(s => (s.schoolId || 's1') === currentSchoolId);
+  }, [students, currentSchoolId, currentUser]);
+
+  // 2. Turmas: Administradores só vêem a sua escola; Professores só vêem turmas atribuídas
+  const filteredClasses = useMemo(() => {
+    if (currentUser?.role === 'Professor') {
+      const assigned = currentUser.assignedClassIds || [];
+      if (assigned.length === 0) return [];
+      return classes.filter(c => assigned.includes(c.id));
+    }
+    if (currentUser?.role !== 'Super-Administrador') {
+      const targetSchool = currentUser?.schoolId || currentSchoolId;
+      return classes.filter(c => (c.schoolId || 's1') === targetSchool);
+    }
+    if (!currentSchoolId || currentSchoolId === 'all') {
+      return classes;
+    }
+    return classes.filter(c => (c.schoolId || 's1') === currentSchoolId);
+  }, [classes, currentSchoolId, currentUser]);
+
+  // 3. Professores: Administradores só vêem da sua escola; Professor vê a si próprio
+  const filteredTeachers = useMemo(() => {
+    if (currentUser?.role === 'Professor') {
+      return teachers.filter(t => t.id === currentUser.id || t.name.toLowerCase() === currentUser.name.toLowerCase());
+    }
+    if (currentUser?.role !== 'Super-Administrador') {
+      const targetSchool = currentUser?.schoolId || currentSchoolId;
+      return teachers.filter(t => (t.schoolId || 's1') === targetSchool);
+    }
+    if (!currentSchoolId || currentSchoolId === 'all') return teachers;
+    return teachers.filter(t => (t.schoolId || 's1') === currentSchoolId);
+  }, [teachers, currentSchoolId, currentUser]);
+
+  // 4. Pagamentos: Apenas administradores da sua escola; Professores não vêem finanças
+  const filteredPayments = useMemo(() => {
+    if (currentUser?.role === 'Professor') return [];
+    if (currentUser?.role !== 'Super-Administrador') {
+      const targetSchool = currentUser?.schoolId || currentSchoolId;
+      return payments.filter(p => (p.schoolId || 's1') === targetSchool);
+    }
+    if (!currentSchoolId || currentSchoolId === 'all') return payments;
+    return payments.filter(p => (p.schoolId || 's1') === currentSchoolId);
+  }, [payments, currentSchoolId, currentUser]);
+
+  // 5. Despesas: Apenas administradores da sua escola
+  const filteredExpenses = useMemo(() => {
+    if (currentUser?.role === 'Professor') return [];
+    if (currentUser?.role !== 'Super-Administrador') {
+      const targetSchool = currentUser?.schoolId || currentSchoolId;
+      return expenses.filter(e => (e.schoolId || 's1') === targetSchool);
+    }
+    if (!currentSchoolId || currentSchoolId === 'all') return expenses;
+    return expenses.filter(e => (e.schoolId || 's1') === currentSchoolId);
+  }, [expenses, currentSchoolId, currentUser]);
+
+  // 6. Notas: Professor só notas das suas turmas; Administrador da sua escola
+  const filteredGrades = useMemo(() => {
+    if (currentUser?.role === 'Professor') {
+      const assigned = currentUser.assignedClassIds || [];
+      if (assigned.length === 0) return [];
+      const assignedStudentIds = new Set(
+        students.filter(s => s.classId && assigned.includes(s.classId)).map(s => s.id)
+      );
+      return grades.filter(g => assignedStudentIds.has(g.studentId));
+    }
+    if (currentUser?.role !== 'Super-Administrador') {
+      const targetSchool = currentUser?.schoolId || currentSchoolId;
+      return grades.filter(g => (g.schoolId || 's1') === targetSchool);
+    }
+    if (!currentSchoolId || currentSchoolId === 'all') return grades;
+    return grades.filter(g => (g.schoolId || 's1') === currentSchoolId);
+  }, [grades, students, currentSchoolId, currentUser]);
+
+  // 7. Modelos: da escola do utilizador
+  const filteredTemplates = useMemo(() => {
+    if (currentUser?.role !== 'Super-Administrador') {
+      const targetSchool = currentUser?.schoolId || currentSchoolId;
+      return templates.filter(t => (t.schoolId || 's1') === targetSchool);
+    }
+    if (!currentSchoolId || currentSchoolId === 'all') return templates;
+    return templates.filter(t => (t.schoolId || 's1') === currentSchoolId);
+  }, [templates, currentSchoolId, currentUser]);
   const filteredUsers = useMemo(() => 
     users.filter(u => 
       currentUser?.role === 'Super-Administrador'
@@ -2821,27 +2889,41 @@ export default function App() {
               )}
             </button>
 
-            <div className="flex items-center gap-2 bg-neutral-50 px-3 py-1.5 rounded-2xl border border-neutral-200">
-              <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest hidden lg:inline ml-1">Escola Activa:</span>
-              <select
-                value={selectedSchoolId}
-                onChange={(e) => {
-                  setSelectedSchoolId(e.target.value);
-                  localStorage.setItem('edugest_selected_school_id', e.target.value);
-                }}
-                className="bg-transparent border-none text-xs font-black text-neutral-800 outline-none pr-2 cursor-pointer focus:ring-0"
-              >
-                <option value="all">🌐 Todas as Escolas ({students.length} alunos no total)</option>
-                {schools.map(s => {
-                  const count = students.filter(st => st.schoolId === s.id).length;
-                  return (
-                    <option key={s.id} value={s.id}>
-                      🏫 {s.name} ({count} alunos)
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
+            {currentUser?.role === 'Super-Administrador' ? (
+              <div className="flex items-center gap-2 bg-neutral-50 px-3 py-1.5 rounded-2xl border border-neutral-200">
+                <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest hidden lg:inline ml-1">Escola Activa:</span>
+                <select
+                  value={selectedSchoolId}
+                  onChange={(e) => {
+                    setSelectedSchoolId(e.target.value);
+                    localStorage.setItem('edugest_selected_school_id', e.target.value);
+                  }}
+                  className="bg-transparent border-none text-xs font-black text-neutral-800 outline-none pr-2 cursor-pointer focus:ring-0"
+                >
+                  <option value="all">🌐 Todas as Escolas ({students.length} alunos no total)</option>
+                  {schools.map(s => {
+                    const count = students.filter(st => (st.schoolId || 's1') === s.id).length;
+                    return (
+                      <option key={s.id} value={s.id}>
+                        🏫 {s.name} ({count} alunos)
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            ) : (
+              currentSchool && (
+                <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 px-4 py-2 rounded-2xl text-xs font-black tracking-tight max-w-[280px] sm:max-w-md truncate shadow-sm flex items-center gap-2">
+                  <span className="truncate">🏫 {currentSchool.name}</span>
+                  <span className="bg-emerald-200/70 text-emerald-900 px-2.5 py-0.5 rounded-full text-[11px] font-bold shrink-0">
+                    {currentUser?.role === 'Professor' 
+                      ? `${filteredStudents.length} alunos (${filteredClasses.length} turmas)`
+                      : `${filteredStudents.length} alunos`
+                    }
+                  </span>
+                </div>
+              )
+            )}
 
             <div className="relative hidden md:block">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" size={16} />
@@ -4975,10 +5057,47 @@ function DashboardView({
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         {[
-          { label: 'Total Alunos', value: enrolledCount, icon: Users, color: 'text-indigo-600', bg: 'bg-indigo-50', gradient: 'from-indigo-500/20 to-transparent' },
-          { label: 'Turmas Activas', value: classes.length, icon: Layers, color: 'text-emerald-600', bg: 'bg-emerald-50', gradient: 'from-emerald-500/20 to-transparent' },
-          { label: 'Receita Total', value: `${totalRevenue.toLocaleString()} AKZ`, icon: DollarSign, color: 'text-amber-600', bg: 'bg-amber-50', gradient: 'from-amber-500/20 to-transparent' },
-          { label: 'Matrículas Pendentes', value: students.filter(s => s.enrollmentStatus === 'Pendente').length, icon: UserRound, color: 'text-rose-600', bg: 'bg-rose-50', gradient: 'from-rose-500/20 to-transparent' },
+          { 
+            label: currentUser?.role === 'Professor' ? 'Alunos nas Minhas Turmas' : 'Alunos da Escola', 
+            value: enrolledCount, 
+            icon: Users, 
+            color: 'text-indigo-600', 
+            bg: 'bg-indigo-50', 
+            gradient: 'from-indigo-500/20 to-transparent' 
+          },
+          { 
+            label: currentUser?.role === 'Professor' ? 'Turmas Atribuídas' : 'Turmas da Escola', 
+            value: classes.length, 
+            icon: Layers, 
+            color: 'text-emerald-600', 
+            bg: 'bg-emerald-50', 
+            gradient: 'from-emerald-500/20 to-transparent' 
+          },
+          currentUser?.role === 'Professor' ? {
+            label: 'Disciplinas Atribuídas',
+            value: (currentUser.assignments?.length || currentUser.assignedSubjects?.length || allSubjects.length || 0),
+            icon: BookOpen,
+            color: 'text-purple-600',
+            bg: 'bg-purple-50',
+            gradient: 'from-purple-500/20 to-transparent'
+          } : { 
+            label: 'Receita Total', 
+            value: `${totalRevenue.toLocaleString()} AKZ`, 
+            icon: DollarSign, 
+            color: 'text-amber-600', 
+            bg: 'bg-amber-50', 
+            gradient: 'from-amber-500/20 to-transparent' 
+          },
+          { 
+            label: currentUser?.role === 'Professor' ? 'Alunos Confirmados' : 'Matrículas Pendentes', 
+            value: currentUser?.role === 'Professor'
+              ? students.filter(s => s.enrollmentStatus === 'Matriculado' || s.enrollmentStatus === 'Confirmado').length
+              : students.filter(s => s.enrollmentStatus === 'Pendente').length, 
+            icon: UserRound, 
+            color: 'text-rose-600', 
+            bg: 'bg-rose-50', 
+            gradient: 'from-rose-500/20 to-transparent' 
+          },
         ].map((stat, i) => (
           <div key={i} className="bg-white p-6 sm:p-8 rounded-[32px] border border-neutral-200 shadow-sm hover:shadow-xl transition-all duration-300 group relative overflow-hidden flex flex-col justify-between min-h-[140px] sm:min-h-[160px]">
             <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl ${stat.gradient} -mr-16 -mt-16 rounded-full transition-transform group-hover:scale-150 duration-700`} />
