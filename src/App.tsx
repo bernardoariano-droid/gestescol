@@ -1171,6 +1171,11 @@ export default function App() {
     };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    // Sincronização Imediata com o Backend na inicialização do Frontend
+    triggerSilentSupabasePull().catch(err => {
+      console.warn('Sincronização inicial no arranque:', err);
+    });
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -1185,66 +1190,51 @@ export default function App() {
     try {
       const cloudData = await pullFromSupabase();
       if (cloudData) {
-        if (Array.isArray(cloudData.schools)) setSchools(cloudData.schools);
+        if (Array.isArray(cloudData.schools)) {
+          setSchools(cloudData.schools);
+          localStorage.setItem('edugest_schools', JSON.stringify(cloudData.schools));
+        }
         if (Array.isArray(cloudData.classes)) {
-          setClasses(prev => {
-            const cloudIds = new Set(cloudData.classes.map((c: Class) => c.id));
-            const localOnly = prev.filter(c => !cloudIds.has(c.id));
-            return [...cloudData.classes, ...localOnly];
-          });
+          setClasses(cloudData.classes);
+          localStorage.setItem('edugest_classes', JSON.stringify(cloudData.classes));
         }
         if (Array.isArray(cloudData.students)) {
-          setStudents(prev => {
-            const cloudIds = new Set(cloudData.students.map((s: Student) => s.id));
-            const localOnly = prev.filter(s => !cloudIds.has(s.id));
-            return [...cloudData.students, ...localOnly];
-          });
+          setStudents(cloudData.students);
+          localStorage.setItem('edugest_students', JSON.stringify(cloudData.students));
         }
         if (Array.isArray(cloudData.teachers)) {
-          setTeachers(prev => {
-            const cloudIds = new Set(cloudData.teachers.map((t: Teacher) => t.id));
-            const localOnly = prev.filter(t => !cloudIds.has(t.id));
-            return [...cloudData.teachers, ...localOnly];
-          });
+          setTeachers(cloudData.teachers);
+          localStorage.setItem('edugest_teachers', JSON.stringify(cloudData.teachers));
         }
         if (Array.isArray(cloudData.grades)) {
-          setGrades(prev => {
-            const gradeMap = new Map<string, Grade>();
-            prev.forEach(g => {
-              const key = `${g.studentId}_${g.subjectId}_${g.period}_${g.type}`;
-              gradeMap.set(key, g);
-            });
-            cloudData.grades.forEach((g: Grade) => {
-              const key = `${g.studentId}_${g.subjectId}_${g.period}_${g.type}`;
-              gradeMap.set(key, g);
-            });
-            const merged = Array.from(gradeMap.values());
-            localStorage.setItem('edugest_grades', JSON.stringify(merged));
-            return merged;
-          });
+          setGrades(cloudData.grades);
+          localStorage.setItem('edugest_grades', JSON.stringify(cloudData.grades));
         }
         if (Array.isArray(cloudData.payments)) {
-          setPayments(prev => {
-            const cloudIds = new Set(cloudData.payments.map((p: Payment) => p.id));
-            const localOnly = prev.filter(p => !cloudIds.has(p.id));
-            return [...cloudData.payments, ...localOnly];
-          });
+          setPayments(cloudData.payments);
+          localStorage.setItem('edugest_payments', JSON.stringify(cloudData.payments));
         }
         if (Array.isArray(cloudData.expenses)) {
-          setExpenses(prev => {
-            const cloudIds = new Set(cloudData.expenses.map((e: Expense) => e.id));
-            const localOnly = prev.filter(e => !cloudIds.has(e.id));
-            return [...cloudData.expenses, ...localOnly];
-          });
+          setExpenses(cloudData.expenses);
+          localStorage.setItem('edugest_expenses', JSON.stringify(cloudData.expenses));
         }
-        if (Array.isArray(cloudData.users)) setUsers(cloudData.users);
-        if (Array.isArray(cloudData.announcements)) setAnnouncements(cloudData.announcements);
-        if (Array.isArray(cloudData.auditLogs)) setAuditLogs(cloudData.auditLogs);
+        if (Array.isArray(cloudData.users)) {
+          setUsers(cloudData.users);
+          localStorage.setItem('edugest_users', JSON.stringify(cloudData.users));
+        }
+        if (Array.isArray(cloudData.announcements)) {
+          setAnnouncements(cloudData.announcements);
+          localStorage.setItem('edugest_announcements', JSON.stringify(cloudData.announcements));
+        }
+        if (Array.isArray(cloudData.auditLogs)) {
+          setAuditLogs(cloudData.auditLogs);
+          localStorage.setItem('edugest_audit_logs', JSON.stringify(cloudData.auditLogs));
+        }
         
-        console.log('Sincronização directa com o backend (Supabase) concluída com sucesso.');
+        console.log(`[SINCRONIZAÇÃO] Dados do backend actualizados no frontend com sucesso: ${cloudData.students?.length} alunos, ${cloudData.classes?.length} turmas, ${cloudData.schools?.length} escolas, ${cloudData.users?.length} utilizadores.`);
       }
     } catch (err) {
-      console.error('Erro na sincronização directa inicial:', err);
+      console.error('Erro na sincronização directa com o backend:', err);
       throw err;
     } finally {
       setIsSyncing(false);
@@ -2887,6 +2877,25 @@ export default function App() {
                   )}
                 </>
               )}
+            </button>
+
+            {/* Direct Refresh / Sincronizar com Backend */}
+            <button
+              onClick={async () => {
+                showToast('A sincronizar com a base de dados remota...', 'info');
+                try {
+                  await triggerSilentSupabasePull();
+                  showToast('Frontend sincronizado e actualizado com sucesso a partir do backend!', 'success');
+                } catch (e: any) {
+                  showToast('Erro ao sincronizar com o backend: ' + (e?.message || e), 'error');
+                }
+              }}
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all active:scale-95 text-xs font-bold shadow-sm cursor-pointer"
+              title="Clique para sincronizar os dados do backend agora"
+            >
+              <RefreshCw size={13} className={isSyncing ? "animate-spin text-blue-600" : "text-blue-600"} />
+              <span className="hidden sm:inline">Actualizar Dados</span>
             </button>
 
             {currentUser?.role === 'Super-Administrador' ? (
