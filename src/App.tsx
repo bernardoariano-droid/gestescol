@@ -1861,20 +1861,16 @@ export default function App() {
     };
   });
 
-  const currentSchoolId = currentUser?.role === 'Super-Administrador'
-    ? selectedSchoolId
-    : (currentUser?.schoolId || selectedSchoolId || (schools[0]?.id || 's1'));
+  const currentSchoolId = selectedSchoolId || currentUser?.schoolId || 'all';
 
   const currentSchool = useMemo(() => {
     if (currentSchoolId === 'all') return schools.find(s => s.id === 's_2ts520h0z') || schools[0];
     return schools.find(s => s.id === currentSchoolId) || schools[0];
   }, [schools, currentSchoolId]);
   
-  const hasActiveSubscription = currentUser?.role === 'Super-Administrador' || (
-    !currentSchool?.subscription || currentSchool.subscription.status === 'Activa'
-  );
-  
-  const showSubscriptionAlert = currentUser?.role !== 'Super-Administrador' && currentSchool && !hasActiveSubscription;
+  // Acesso 100% ilimitado sem qualquer restrição de licença ou assinatura para todos os utilizadores
+  const hasActiveSubscription = true;
+  const showSubscriptionAlert = false;
 
   // Sync schoolSettings with the active school when it changes
   useEffect(() => {
@@ -1900,7 +1896,7 @@ export default function App() {
   const filteredClasses = useMemo(() => 
     classes.filter(c => 
       (isSingleSchool || !currentSchoolId || currentSchoolId === 'all' || !c.schoolId || c.schoolId === currentSchoolId) &&
-      (currentUser?.role !== 'Professor' || currentUser.assignedClassIds?.includes(c.id))
+      (currentUser?.role !== 'Professor' || !currentUser.assignedClassIds?.length || currentUser.assignedClassIds?.includes(c.id))
     ),
     [classes, currentSchoolId, isSingleSchool, currentUser]
   );
@@ -2825,35 +2821,27 @@ export default function App() {
               )}
             </button>
 
-            {currentUser?.role === 'Super-Administrador' ? (
-              <div className="flex items-center gap-2 bg-neutral-50 px-3 py-1.5 rounded-2xl border border-neutral-200">
-                <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest hidden lg:inline ml-1">Escola Activa:</span>
-                <select
-                  value={selectedSchoolId}
-                  onChange={(e) => {
-                    setSelectedSchoolId(e.target.value);
-                    localStorage.setItem('edugest_selected_school_id', e.target.value);
-                  }}
-                  className="bg-transparent border-none text-xs font-black text-neutral-800 outline-none pr-2 cursor-pointer focus:ring-0"
-                >
-                  <option value="all">🌐 Todas as Escolas ({students.length} alunos no total)</option>
-                  {schools.map(s => {
-                    const count = students.filter(st => st.schoolId === s.id).length;
-                    return (
-                      <option key={s.id} value={s.id}>
-                        🏫 {s.name} ({count} alunos)
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-            ) : (
-              currentSchool && (
-                <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 px-4 py-2 rounded-2xl text-xs font-black tracking-tight max-w-[200px] sm:max-w-xs truncate shadow-sm">
-                  🏫 {currentSchool.name}
-                </div>
-              )
-            )}
+            <div className="flex items-center gap-2 bg-neutral-50 px-3 py-1.5 rounded-2xl border border-neutral-200">
+              <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest hidden lg:inline ml-1">Escola Activa:</span>
+              <select
+                value={selectedSchoolId}
+                onChange={(e) => {
+                  setSelectedSchoolId(e.target.value);
+                  localStorage.setItem('edugest_selected_school_id', e.target.value);
+                }}
+                className="bg-transparent border-none text-xs font-black text-neutral-800 outline-none pr-2 cursor-pointer focus:ring-0"
+              >
+                <option value="all">🌐 Todas as Escolas ({students.length} alunos no total)</option>
+                {schools.map(s => {
+                  const count = students.filter(st => st.schoolId === s.id).length;
+                  return (
+                    <option key={s.id} value={s.id}>
+                      🏫 {s.name} ({count} alunos)
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
 
             <div className="relative hidden md:block">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" size={16} />
@@ -2966,8 +2954,8 @@ export default function App() {
                   students={filteredStudents} 
                   classes={filteredClasses} 
                   grades={filteredGrades}
-                  onAddStudent={(currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador' || currentUser?.role === 'Secretário') && hasActiveSubscription ? (s) => {
-                    const targetSchoolId = s.schoolId || currentSchoolId || (schools[0]?.id || 's1');
+                  onAddStudent={(s) => {
+                    const targetSchoolId = s.schoolId || (currentSchoolId !== 'all' ? currentSchoolId : undefined) || currentUser?.schoolId || (schools[0]?.id || 's1');
                     const studentWithSchool: Student = { ...s, schoolId: targetSchoolId };
                     setStudents(prev => [...prev.filter(item => item.id !== studentWithSchool.id), studentWithSchool]);
                     showToast('Aluno matriculado e enviado para o backend com sucesso!', 'success');
@@ -2975,15 +2963,15 @@ export default function App() {
                       console.warn('Erro ao enviar matrícula ao backend:', err);
                     });
                     queueSyncAction('CADASTRAR_ALUNO', `Matrícula do aluno "${studentWithSchool.name}"`, studentWithSchool);
-                  } : undefined}
-                  onUpdateStudent={hasActiveSubscription ? (s) => {
-                    const targetSchoolId = s.schoolId || currentSchoolId || (schools[0]?.id || 's1');
+                  }}
+                  onUpdateStudent={(s) => {
+                    const targetSchoolId = s.schoolId || (currentSchoolId !== 'all' ? currentSchoolId : undefined) || currentUser?.schoolId || (schools[0]?.id || 's1');
                     const updatedStudent: Student = { ...s, schoolId: targetSchoolId };
                     setStudents(prev => prev.map(item => item.id === s.id ? updatedStudent : item));
                     showToast('Dados do aluno actualizados', 'success');
                     queueSyncAction('ACTUALIZAR_ALUNO', `Dados de "${s.name}" actualizados`, updatedStudent);
-                  } : undefined}
-                  onDeleteStudent={currentUser?.role !== 'Professor' && hasActiveSubscription ? onDeleteStudent : undefined}
+                  }}
+                  onDeleteStudent={onDeleteStudent}
                   getGrade={getGrade}
                   setActiveView={setActiveView}
                   isAdding={isAddingStudent}
@@ -2991,7 +2979,7 @@ export default function App() {
                   editingStudent={editingStudent}
                   setEditingStudent={setEditingStudent}
                   currentUser={currentUser || undefined}
-                  onImportStudents={hasActiveSubscription ? (importedStudents) => {
+                  onImportStudents={(importedStudents) => {
                     const createdClassesMap: { [key: string]: string } = {};
                     const newClassesToAdd: Class[] = [];
 
@@ -3056,7 +3044,7 @@ export default function App() {
                       console.warn('Erro ao enviar importação em massa ao backend:', err);
                     });
                     queueSyncAction('IMPORTAR_ALUNOS', `Importação de ${newStudents.length} alunos`, newStudents);
-                  } : undefined}
+                  }}
                 />
               )}
               {activeView === 'academic' && (
@@ -3064,17 +3052,17 @@ export default function App() {
                   classes={filteredClasses} 
                   students={filteredStudents}
                   grades={filteredGrades}
-                  onUpdateGrades={hasActiveSubscription ? (newGrades) => {
+                  onUpdateGrades={(newGrades) => {
                     onUpdateGrades(newGrades);
-                  } : undefined}
+                  }}
                   getGrade={getGrade}
                   teachers={filteredTeachers}
-                  onUpdateTeachers={hasActiveSubscription ? (newTeachers) => {
+                  onUpdateTeachers={(newTeachers) => {
                     const otherSchoolsTeachers = teachers.filter(t => t.schoolId !== currentSchoolId);
-                    const withSchoolId = newTeachers.map(t => ({ ...t, schoolId: currentSchoolId || t.schoolId || 's1' }));
+                    const withSchoolId = newTeachers.map(t => ({ ...t, schoolId: (currentSchoolId !== 'all' ? currentSchoolId : undefined) || t.schoolId || 's1' }));
                     setTeachers([...otherSchoolsTeachers, ...withSchoolId]);
                     queueSyncAction('ACTUALIZAR_PROFESSORES', `Lista de professores actualizada`, newTeachers);
-                  } : undefined}
+                  }}
                   schoolSettings={schoolSettings}
                   showToast={showToast}
                 />
@@ -3085,22 +3073,22 @@ export default function App() {
                   payments={filteredPayments}
                   expenses={filteredExpenses}
                   classes={filteredClasses}
-                  onAddPayment={hasActiveSubscription ? (p) => {
-                    setPayments(prev => [...prev, { ...p, schoolId: currentSchoolId || '' }]);
+                  onAddPayment={(p) => {
+                    setPayments(prev => [...prev, { ...p, schoolId: (currentSchoolId !== 'all' ? currentSchoolId : undefined) || p.schoolId || '' }]);
                     queueSyncAction('REGISTAR_PAGAMENTO', `Pagamento de MZN ${p.amount} (${p.service}) registado para o aluno`, p);
-                  } : undefined}
-                  onAddExpense={hasActiveSubscription ? (exp) => {
-                    setExpenses(prev => [...prev, { ...exp, schoolId: currentSchoolId || '' }]);
+                  }}
+                  onAddExpense={(exp) => {
+                    setExpenses(prev => [...prev, { ...exp, schoolId: (currentSchoolId !== 'all' ? currentSchoolId : undefined) || exp.schoolId || '' }]);
                     queueSyncAction('REGISTAR_DESPESA', `Despesa "${exp.description}" (${exp.amount} MZN) registada`, exp);
-                  } : undefined}
-                  onDeleteExpense={hasActiveSubscription ? (id) => {
+                  }}
+                  onDeleteExpense={(id) => {
                     setExpenses(prev => prev.filter(e => e.id !== id));
                     queueSyncAction('ELIMINAR_DESPESA', `Despesa ID: ${id} eliminada`, { id });
-                  } : undefined}
-                  onUpdateExpense={hasActiveSubscription ? (exp) => {
-                    setExpenses(prev => prev.map(item => item.id === exp.id ? { ...exp, schoolId: exp.schoolId || currentSchoolId || '' } : item));
+                  }}
+                  onUpdateExpense={(exp) => {
+                    setExpenses(prev => prev.map(item => item.id === exp.id ? { ...exp, schoolId: exp.schoolId || (currentSchoolId !== 'all' ? currentSchoolId : undefined) || '' } : item));
                     queueSyncAction('ACTUALIZAR_DESPESA', `Despesa "${exp.description}" actualizada`, exp);
-                  } : undefined}
+                  }}
                   confirmAction={confirmAction}
                   currentUser={currentUser}
                   schoolName={schools.find(s => s.id === currentSchoolId)?.name}
@@ -3114,17 +3102,17 @@ export default function App() {
                 <TeachersView 
                   teachers={filteredTeachers} 
                   classes={filteredClasses}
-                  onAddTeacher={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? (t) => {
-                    setTeachers([...teachers, { ...t, schoolId: currentSchoolId || '' }]);
+                  onAddTeacher={(t) => {
+                    setTeachers([...teachers, { ...t, schoolId: (currentSchoolId !== 'all' ? currentSchoolId : undefined) || t.schoolId || '' }]);
                     showToast('Professor cadastrado com sucesso');
                     queueSyncAction('CADASTRAR_PROFESSOR', `Cadastro do professor "${t.name}"`, t);
-                  } : undefined}
-                  onUpdateTeacher={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? (t) => {
-                    setTeachers(teachers.map(item => item.id === t.id ? { ...t, schoolId: t.schoolId || currentSchoolId || '' } : item));
+                  }}
+                  onUpdateTeacher={(t) => {
+                    setTeachers(teachers.map(item => item.id === t.id ? { ...t, schoolId: t.schoolId || (currentSchoolId !== 'all' ? currentSchoolId : undefined) || '' } : item));
                     showToast('Dados do professor actualizados');
                     queueSyncAction('ACTUALIZAR_PROFESSOR', `Dados de "${t.name}" actualizados`, t);
-                  } : undefined}
-                  onDeleteTeacher={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? onDeleteTeacher : undefined}
+                  }}
+                  onDeleteTeacher={onDeleteTeacher}
                   showToast={showToast}
                 />
               )}
@@ -3170,11 +3158,11 @@ export default function App() {
                   setActiveView={setActiveView}
                   schoolSettings={schoolSettings}
                   setSchoolSettings={setSchoolSettings}
-                  onEditStudent={hasActiveSubscription ? (student) => {
+                  onEditStudent={(student) => {
                     setEditingStudent(student);
                     setActiveView('students');
-                  } : undefined}
-                  onDeleteStudent={currentUser?.role !== 'Professor' && hasActiveSubscription ? onDeleteStudent : undefined}
+                  }}
+                  onDeleteStudent={onDeleteStudent}
                   onExportPDF={exportClassStudentListPDF}
                 />
               )}
@@ -3220,14 +3208,14 @@ export default function App() {
               )}
               {activeView === 'certificates' && (
                 <CertificatesView 
-                  students={filteredStudents}
+                  students={filteredStudents} 
                   classes={filteredClasses}
                   templates={filteredTemplates}
-                  onUpdateTemplates={hasActiveSubscription ? (newTemplates) => {
+                  onUpdateTemplates={(newTemplates) => {
                     const otherSchoolsTemplates = templates.filter(t => t.schoolId !== currentSchoolId);
-                    const withSchoolId = newTemplates.map(t => ({ ...t, schoolId: currentSchoolId || t.schoolId || 's1' }));
+                    const withSchoolId = newTemplates.map(t => ({ ...t, schoolId: (currentSchoolId !== 'all' ? currentSchoolId : undefined) || t.schoolId || 's1' }));
                     setTemplates([...otherSchoolsTemplates, ...withSchoolId]);
-                  } : undefined}
+                  }}
                   schoolSettings={schoolSettings}
                   initialStudentId={certInitData.studentId}
                   initialTab={certInitData.tab}
@@ -3238,9 +3226,9 @@ export default function App() {
               {activeView === 'users' && (
                 <UsersView 
                   users={filteredUsers}
-                  onAddUser={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? onAddUser : undefined}
-                  onUpdateUser={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? onUpdateUser : undefined}
-                  onDeleteUser={(hasActiveSubscription || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Administrador') ? onDeleteUser : undefined}
+                  onAddUser={onAddUser}
+                  onUpdateUser={onUpdateUser}
+                  onDeleteUser={onDeleteUser}
                   showToast={showToast}
                   currentUser={currentUser}
                   schools={schools}
@@ -6032,15 +6020,13 @@ function StudentsView({
         </div>
         {onAddStudent && (
           <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-            {currentUser && ['Super-Administrador', 'Administrador', 'Secretário'].includes(currentUser.role) && (
-              <button 
-                onClick={() => setIsImportModalOpen(true)}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-bold transition-all shadow-lg shadow-blue-100 active:scale-95 w-full lg:w-auto"
-              >
-                <FileDown size={20} />
-                Importar Excel
-              </button>
-            )}
+            <button 
+              onClick={() => setIsImportModalOpen(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-bold transition-all shadow-lg shadow-blue-100 active:scale-95 w-full lg:w-auto"
+            >
+              <FileDown size={20} />
+              Importar Excel
+            </button>
             <button 
               onClick={() => setIsAdding(true)}
               className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-bold transition-all shadow-lg shadow-emerald-100 active:scale-95 w-full lg:w-auto"
@@ -10530,7 +10516,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
   schoolName?: string,
   showToast?: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void
 }) {
-  const availableClasses = currentUser.role === 'Professor' 
+  const availableClasses = currentUser?.role === 'Professor' && (currentUser.assignedClassIds && currentUser.assignedClassIds.length > 0)
     ? classes.filter(c => currentUser.assignedClassIds?.includes(c.id))
     : classes;
 
@@ -11147,7 +11133,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   currentUser: any,
   schoolName?: string
 }) {
-  const availableClasses = currentUser.role === 'Professor' 
+  const availableClasses = currentUser?.role === 'Professor' && (currentUser.assignedClassIds && currentUser.assignedClassIds.length > 0)
     ? classes.filter(c => currentUser.assignedClassIds?.includes(c.id))
     : classes;
     
