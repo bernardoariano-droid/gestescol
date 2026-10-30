@@ -10244,13 +10244,9 @@ function ClassesView({
 }
 
 function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, role: string, schoolId?: string }) => void }) {
-  const [isLogin, setIsLogin] = useState(true);
   const [isRecoveryMode, setIsRecoveryMode] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [role, setRole] = useState('Administrador');
-  const [schoolName, setSchoolName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [recoveryMessage, setRecoveryMessage] = useState('');
@@ -10275,139 +10271,45 @@ function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, 
     e.preventDefault();
     setError('');
 
-    if (isLogin) {
-      const users = JSON.parse(localStorage.getItem('edugest_users') || '[]');
-      let user = users.find((u: any) => u.email === email && u.password === password);
-      
-      if (!user) {
-        try {
-          const { data: dbUser, error: dbError } = await supabase
-            .from('utilizadores')
-            .select('*')
-            .eq('email', email)
-            .maybeSingle();
-
-          if (!dbError && dbUser) {
-            if (dbUser.password === password) {
-              user = {
-                id: dbUser.id,
-                email: dbUser.email,
-                password: dbUser.password,
-                name: dbUser.name,
-                role: dbUser.role,
-                status: dbUser.status,
-                schoolId: dbUser.school_id
-              };
-              users.push(user);
-              localStorage.setItem('edugest_users', JSON.stringify(users));
-            }
-          }
-        } catch (err) {
-          console.error('Erro ao autenticar via Supabase:', err);
-        }
-      }
-
-      if (user) {
-        if (user.status === 'Inactivo') {
-          setError('A sua conta está inactiva. Contacte o administrador.');
-          return;
-        }
-        onLogin({ email: user.email, name: user.name, role: user.role || 'Administrador' });
-      } else {
-        setError('E-mail ou palavra-passe incorretos.');
-      }
-    } else {
-      const users = JSON.parse(localStorage.getItem('edugest_users') || '[]');
-      if (users.find((u: any) => u.email === email)) {
-        setError('Este e-mail já está registado localmente.');
-        return;
-      }
-
+    const users = JSON.parse(localStorage.getItem('edugest_users') || '[]');
+    let user = users.find((u: any) => u.email === email && u.password === password);
+    
+    if (!user) {
       try {
-        const { data: existingUser } = await supabase
+        const { data: dbUser, error: dbError } = await supabase
           .from('utilizadores')
-          .select('id')
+          .select('*')
           .eq('email', email)
           .maybeSingle();
-          
-        if (existingUser) {
-          setError('Este e-mail já está registado na base de dados remota.');
-          return;
-        }
-      } catch (err) {
-        console.warn('Supabase check skipped:', err);
-      }
 
-      let schoolId = undefined;
-      
-      if (role === 'Administrador') {
-        const newSchoolId = 's_' + Math.random().toString(36).substr(2, 9);
-        const newSchool = {
-          id: newSchoolId,
-          name: schoolName,
-          status: 'Activo',
-          republica: 'República de Angola',
-          governoProvincia: 'Governo da Província do Cuanza-Sul',
-          administracaoMunicipal: 'Administração Municipal',
-          direccaoMunicipal: 'Direcção Municipal da Educação',
-          anoLectivo: '2023/2024'
-        };
-        const schools = JSON.parse(localStorage.getItem('edugest_schools') || '[]');
-        schools.push(newSchool);
-        localStorage.setItem('edugest_schools', JSON.stringify(schools));
-        localStorage.setItem('edugest_selected_school_id', newSchoolId);
-        schoolId = newSchoolId;
-
-        try {
-          await pushItemToSupabaseWithRetry({
-            type: 'CRIAR_ESCOLA',
-            data: {
-              id: newSchoolId,
-              name: schoolName,
-              status: 'Activo',
-              republica: 'República de Angola',
-              governoProvincia: 'Governo da Província do Cuanza-Sul',
-              administracaoMunicipal: 'Administração Municipal',
-              direccaoMunicipal: 'Direcção Municipal da Educação',
-              anoLectivo: '2023/2024'
-            }
-          });
-        } catch (err) {
-          console.error('Erro ao guardar escola no Supabase via proxy:', err);
-        }
-      }
-
-      const newUser = { 
-        id: Math.random().toString(36).substr(2, 9),
-        email, 
-        password, 
-        name, 
-        role,
-        status: 'Activo',
-        schoolId
-      };
-      users.push(newUser);
-      localStorage.setItem('edugest_users', JSON.stringify(users));
-
-      try {
-        await pushItemToSupabaseWithRetry({
-          type: 'CADASTRAR_UTILIZADOR',
-          data: {
-            id: newUser.id,
-            name: newUser.name,
-            email: newUser.email,
-            password: newUser.password,
-            role: newUser.role,
-            status: 'Activo',
-            schoolId: newUser.schoolId || null
+        if (!dbError && dbUser) {
+          if (dbUser.password === password) {
+            user = {
+              id: dbUser.id,
+              email: dbUser.email,
+              password: dbUser.password,
+              name: dbUser.name,
+              role: dbUser.role,
+              status: dbUser.status,
+              schoolId: dbUser.school_id
+            };
+            users.push(user);
+            localStorage.setItem('edugest_users', JSON.stringify(users));
           }
-        });
+        }
       } catch (err) {
-        console.error('Erro ao guardar utilizador no Supabase via proxy:', err);
+        console.error('Erro ao autenticar via Supabase:', err);
       }
-      
-      setIsLogin(true);
-      setError('Cadastro realizado com sucesso! Por favor, faça o login.');
+    }
+
+    if (user) {
+      if (user.status === 'Inactivo') {
+        setError('A sua conta está inactiva. Contacte o administrador.');
+        return;
+      }
+      onLogin({ email: user.email, name: user.name, role: user.role || 'Administrador', schoolId: user.schoolId });
+    } else {
+      setError('E-mail ou palavra-passe incorretos.');
     }
   };
 
@@ -10477,75 +10379,12 @@ function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, 
             </div>
           ) : (
             <>
-              <div className="flex gap-4 mb-10 p-1.5 bg-neutral-100 rounded-[24px]">
-                <button 
-                  onClick={() => { setIsLogin(true); setError(''); }}
-                  className={cn(
-                    "flex-1 py-3 rounded-[18px] text-xs font-black uppercase tracking-widest transition-all",
-                    isLogin ? "bg-white text-emerald-600 shadow-sm" : "text-neutral-400 hover:text-neutral-600"
-                  )}
-                >
-                  Entrar
-                </button>
-                <button 
-                  onClick={() => { setIsLogin(false); setError(''); }}
-                  className={cn(
-                    "flex-1 py-3 rounded-[18px] text-xs font-black uppercase tracking-widest transition-all",
-                    !isLogin ? "bg-white text-emerald-600 shadow-sm" : "text-neutral-400 hover:text-neutral-600"
-                  )}
-                >
-                  Registar
-                </button>
+              <div className="mb-8">
+                <h2 className="text-2xl font-black text-neutral-900 tracking-tight">Iniciar Sessão</h2>
+                <p className="text-xs font-bold text-neutral-400 mt-1">Introduza as suas credenciais para aceder ao sistema</p>
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-6">
-                {!isLogin && (
-                  <>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Nome Completo</label>
-                      <div className="relative">
-                        <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" size={18} />
-                        <input 
-                          type="text" 
-                          required 
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          placeholder="Seu nome" 
-                          className="w-full pl-12 pr-4 py-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all" 
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Cargo</label>
-                      <select 
-                        value={role}
-                        onChange={(e) => setRole(e.target.value)}
-                        className="w-full px-4 py-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
-                      >
-                        <option value="Administrador">Administrador</option>
-                        <option value="Super-Administrador">Super-Administrador</option>
-                      </select>
-                    </div>
-
-                    {role === 'Administrador' && (
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Nome da Escola</label>
-                        <div className="relative">
-                          <GraduationCap className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" size={18} />
-                          <input 
-                            type="text" 
-                            required 
-                            value={schoolName}
-                            onChange={(e) => setSchoolName(e.target.value)}
-                            placeholder="Nome da instituição de ensino" 
-                            className="w-full pl-12 pr-4 py-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all" 
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">E-mail Institucional</label>
                   <div className="relative">
@@ -10581,17 +10420,15 @@ function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, 
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
-                  {isLogin && (
-                    <div className="flex justify-end mt-2">
-                      <button 
-                        type="button" 
-                        onClick={() => { setIsRecoveryMode(true); setError(''); setRecoveryMessage(''); }}
-                        className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 transition-colors uppercase tracking-widest"
-                      >
-                        Recuperar palavra-passe
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex justify-end mt-2">
+                    <button 
+                      type="button" 
+                      onClick={() => { setIsRecoveryMode(true); setError(''); setRecoveryMessage(''); }}
+                      className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 transition-colors uppercase tracking-widest"
+                    >
+                      Recuperar palavra-passe
+                    </button>
+                  </div>
                 </div>
 
                 {error && (
@@ -10608,20 +10445,17 @@ function AuthView({ onLogin }: { onLogin: (user: { email: string, name: string, 
                   type="submit" 
                   className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black shadow-xl shadow-emerald-100 active:scale-95 transition-all hover:bg-emerald-700 flex items-center justify-center gap-2"
                 >
-                  {isLogin ? <LogIn size={20} /> : <UserPlus size={20} />}
-                  {isLogin ? 'Entrar no Sistema' : 'Criar Conta'}
+                  <LogIn size={20} />
+                  Entrar no Sistema
                 </button>
               </form>
 
-              <div className="mt-10 text-center">
-                <p className="text-neutral-400 text-xs font-bold">
-                  {isLogin ? 'Ainda não tem conta?' : 'Já tem uma conta?'}
-                  <button 
-                    onClick={() => { setIsLogin(!isLogin); setError(''); }}
-                    className="ml-2 text-emerald-600 hover:text-emerald-700 transition-colors"
-                  >
-                    {isLogin ? 'Registe-se aqui' : 'Entre aqui'}
-                  </button>
+              <div className="mt-8 pt-6 border-t border-neutral-100 text-center">
+                <p className="text-neutral-400 text-xs font-medium">
+                  Acesso exclusivo a utilizadores credenciados.
+                </p>
+                <p className="text-[11px] text-neutral-400 mt-1">
+                  Para novos acessos ou suporte, contacte a Direcção da Escola.
                 </p>
               </div>
             </>
