@@ -191,6 +191,8 @@ export type PedagogicalCriteria = {
   academicYear: string;
   evaluationPeriod: 'Anual / Final' | '1º Trimestre' | '2º Trimestre' | '3º Trimestre' | 'Exames';
   curriculumPlan: string;
+  isActive?: boolean;
+  activatedAt?: string;
   
   // 1. Critérios de Aprovação
   approval: {

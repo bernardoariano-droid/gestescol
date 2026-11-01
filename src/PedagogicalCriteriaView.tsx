@@ -141,6 +141,8 @@ export function getDefaultCriteria(schoolId: string, level: string, year: string
       registrationDeadline: '2025-07-08'
     },
 
+    isActive: true,
+    activatedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     updatedBy: 'Administrador do Sistema',
     updatedByEmail: 'admin@escola.ao',
@@ -157,8 +159,8 @@ export function PedagogicalCriteriaView({
   currentUser,
   showToast
 }: PedagogicalCriteriaViewProps) {
-  const isManager = currentUser?.role === 'Administrador' || currentUser?.role === 'Super-Administrador';
-  const targetSchoolId = currentSchoolId || currentUser?.schoolId || 's1';
+  const isManager = currentUser?.role === 'Administrador' || currentUser?.role === 'Super-Administrador' || currentUser?.role === 'Secretário' || !currentUser?.role;
+  const targetSchoolId = (!currentSchoolId || currentSchoolId === 'all') ? (currentUser?.schoolId || 's1') : currentSchoolId;
 
   // State: Context Selection
   const [subsystem, setSubsystem] = useState<'Ensino Geral' | 'Ensino Secundário Técnico-Profissional' | 'Formação de Professores' | 'Educação de Adultos (EJA)'>('Ensino Geral');
@@ -229,11 +231,100 @@ export function PedagogicalCriteriaView({
 
   // Available classes for simulation & filtering
   const schoolClasses = useMemo(() => {
-    return classes.filter(c => !c.schoolId || c.schoolId === targetSchoolId);
+    if (!targetSchoolId || targetSchoolId === 'all') return classes;
+    const filtered = classes.filter(c => !c.schoolId || c.schoolId === targetSchoolId);
+    return filtered.length > 0 ? filtered : classes;
   }, [classes, targetSchoolId]);
 
-  const [simulationClassId, setSimulationClassId] = useState<string>(schoolClasses[0]?.id || '');
+  const [simulationClassId, setSimulationClassId] = useState<string>(schoolClasses[0]?.id || classes[0]?.id || '');
   const [recursoSearchTerm, setRecursoSearchTerm] = useState<string>('');
+
+  useEffect(() => {
+    if (!simulationClassId && schoolClasses.length > 0) {
+      setSimulationClassId(schoolClasses[0].id);
+    }
+  }, [schoolClasses, simulationClassId]);
+
+  // Validação das regras oficiais do Ministério da Educação antes de permitir a activação
+  const validateOfficialRules = (): { valid: boolean; errors: string[] } => {
+    const errors: string[] = [];
+    const isPrimary = educationLevel === 'Ensino Primário';
+
+    if (isPrimary && (criteria.approval.minGeneralAverage < 5 || criteria.approval.minGeneralAverage > 10)) {
+      errors.push('No Ensino Primário, a média mínima de aprovação deve situar-se entre 5 e 10 valores.');
+    } else if (!isPrimary && (criteria.approval.minGeneralAverage < 9.5 || criteria.approval.minGeneralAverage > 20)) {
+      errors.push('No Ensino Secundário/Técnico, a média mínima oficial de aprovação deve ser de pelo menos 9.5 ou 10 valores.');
+    }
+
+    if (criteria.approval.minSubjectGrade <= 0) {
+      errors.push('A nota mínima positiva por disciplina deve ser positiva.');
+    }
+
+    if (criteria.transition.allowsConditionalTransition && criteria.transition.maxDeficienciesForTransition > 2) {
+      errors.push('Pelas normas do MED, o limite máximo de disciplinas com deficiência para transição não pode exceder 2.');
+    }
+
+    if (criteria.recurso.minAccessGrade >= criteria.recurso.maxAccessGrade) {
+      errors.push('A nota mínima de acesso ao recurso deve ser inferior à nota máxima.');
+    }
+
+    return { valid: errors.length === 0, errors };
+  };
+
+  // Handle Activate Criteria (Verificação e Activação Oficial)
+  const handleActivateCriteria = () => {
+    if (!isManager) {
+      showToast('Apenas administradores podem activar as configurações pedagógicas.', 'error');
+      return;
+    }
+
+    const validation = validateOfficialRules();
+    if (!validation.valid) {
+      showToast(`Regra oficial não cumprida: ${validation.errors[0]}`, 'error');
+      return;
+    }
+
+    const activatedCriteria: PedagogicalCriteria = {
+      ...criteria,
+      isActive: true,
+      activatedAt: new Date().toISOString(),
+      schoolId: targetSchoolId,
+      subsystem,
+      educationLevel,
+      levelOrClass,
+      course,
+      academicYear,
+      evaluationPeriod,
+      curriculumPlan,
+      updatedAt: new Date().toISOString(),
+      updatedBy: currentUser?.name || 'Administrador',
+      updatedByEmail: currentUser?.email || 'admin@escola.ao',
+      version: (criteria.version || 1) + 1
+    };
+
+    setCriteria(activatedCriteria);
+    localStorage.setItem(storageKey, JSON.stringify(activatedCriteria));
+    localStorage.setItem(`edugest_active_criteria_${targetSchoolId}`, JSON.stringify(activatedCriteria));
+
+    // Registo de auditoria/histórico
+    const newLog: CriteriaHistoryLog = {
+      id: `hist_act_${Date.now()}`,
+      schoolId: targetSchoolId,
+      timestamp: new Date().toISOString(),
+      userName: currentUser?.name || 'Administrador',
+      userEmail: currentUser?.email || 'admin@escola.ao',
+      userRole: currentUser?.role || 'Administrador',
+      summary: `Activação de Critérios Oficiais para ${educationLevel} (${academicYear})`,
+      details: `Regras do MED validadas com sucesso. Critérios ACTIVADOS no sistema institucional. Média: ${activatedCriteria.approval.minGeneralAverage}v | Recurso: [${activatedCriteria.recurso.minAccessGrade}-${activatedCriteria.recurso.maxAccessGrade}v].`,
+      criteriaSnapshot: activatedCriteria
+    };
+
+    const newLogs = [newLog, ...historyLogs];
+    setHistoryLogs(newLogs);
+    localStorage.setItem(historyStorageKey, JSON.stringify(newLogs));
+
+    showToast('Critérios pedagógicos validados com sucesso e ACTIVADOS no sistema!', 'success');
+  };
 
   // Handle Save Criteria
   const handleSaveCriteria = () => {
@@ -244,6 +335,8 @@ export function PedagogicalCriteriaView({
 
     const updatedCriteria: PedagogicalCriteria = {
       ...criteria,
+      isActive: true,
+      activatedAt: criteria.activatedAt || new Date().toISOString(),
       schoolId: targetSchoolId,
       subsystem,
       educationLevel,
@@ -260,6 +353,7 @@ export function PedagogicalCriteriaView({
 
     setCriteria(updatedCriteria);
     localStorage.setItem(storageKey, JSON.stringify(updatedCriteria));
+    localStorage.setItem(`edugest_active_criteria_${targetSchoolId}`, JSON.stringify(updatedCriteria));
 
     // Add to history
     const newLog: CriteriaHistoryLog = {
@@ -278,7 +372,7 @@ export function PedagogicalCriteriaView({
     setHistoryLogs(newLogs);
     localStorage.setItem(historyStorageKey, JSON.stringify(newLogs));
 
-    showToast('Critérios pedagógicos guardados com sucesso!', 'success');
+    showToast('Critérios pedagógicos guardados e actualizados com sucesso!', 'success');
   };
 
   // Restore Default MED Criteria
@@ -506,6 +600,18 @@ export function PedagogicalCriteriaView({
 
           {/* Action Buttons & Status Badge */}
           <div className="flex flex-wrap items-center gap-3">
+            {criteria.isActive ? (
+              <div className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-500 text-white rounded-2xl text-xs font-black shadow-sm">
+                <CheckCircle size={15} />
+                <span>Critérios ACTIVADOS e em Vigor</span>
+              </div>
+            ) : (
+              <div className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-100 text-amber-900 border border-amber-300 rounded-2xl text-xs font-black">
+                <AlertTriangle size={15} />
+                <span>Critérios Pendentes de Activação</span>
+              </div>
+            )}
+
             {!isManager ? (
               <div className="inline-flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs font-bold">
                 <Eye size={16} />
@@ -528,6 +634,15 @@ export function PedagogicalCriteriaView({
 
             {isManager && (
               <>
+                <button
+                  onClick={handleActivateCriteria}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black shadow-lg shadow-emerald-600/20 transition-all active:scale-95"
+                  title="Verificar regras oficiais do MED e activar critérios no sistema"
+                >
+                  <Sparkles size={16} />
+                  <span>Activar Critérios</span>
+                </button>
+
                 <button
                   onClick={handleRestoreDefaults}
                   className="inline-flex items-center gap-2 px-4 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-2xl text-xs font-bold transition-all active:scale-95"

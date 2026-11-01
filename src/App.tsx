@@ -1808,14 +1808,19 @@ export default function App() {
       transfers: { title: 'Transferências de Alunos', subtitle: 'Gestão de transferências' },
       calendar: { title: 'Calendário Escolar', subtitle: 'Planeamento de atividades e avaliações' },
       archive: { title: 'Arquivo Digital', subtitle: 'Armazenamento seguro de documentos' },
-      audit: { title: 'Auditoria de Acesso', subtitle: 'Histórico de acções e registo de acessos' }
+      audit: { title: 'Auditoria de Acesso', subtitle: 'Histórico de acções e registo de acessos' },
+      'pedagogical-criteria': { title: 'Configurações Pedagógicas', subtitle: 'Critérios de avaliação, aprovação, transição e exames' }
     } as Record<View, { title: string, subtitle: string }>;
 
     const saved = localStorage.getItem('edugest_view_configs');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return { ...defaultConfigs, ...parsed };
+        return {
+          ...defaultConfigs,
+          ...parsed,
+          'pedagogical-criteria': parsed['pedagogical-criteria'] || defaultConfigs['pedagogical-criteria']
+        };
       } catch (e) {
         // Fallback to default
       }
@@ -2637,7 +2642,7 @@ export default function App() {
     { id: 'exams', label: 'Exames', icon: BookOpen, roles: ['Administrador', 'Secretário', 'Professor'], group: 'Área Académica' },
     { id: 'mini-pautas', label: 'Mini Pautas', icon: FileSpreadsheet, roles: ['Administrador', 'Professor', 'Secretário'], group: 'Área Académica' },
     { id: 'pauta-final', label: 'Pautas Finais', icon: GraduationCap, roles: ['Administrador', 'Professor', 'Secretário'], group: 'Área Académica' },
-    { id: 'pedagogical-criteria', label: 'Configurações Pedagógicas', icon: Sliders, roles: ['Super-Administrador', 'Administrador', 'Professor'], group: 'Área Académica' },
+    { id: 'pedagogical-criteria', label: 'Configurações Pedagógicas', icon: Sliders, roles: ['Super-Administrador', 'Administrador', 'Professor', 'Secretário'], group: 'Área Académica' },
     { id: 'boletim', label: 'Boletim de Notas', icon: FileDown, roles: ['Administrador', 'Professor', 'Secretário', 'Aluno'], group: 'Área Académica' },
     { id: 'certificates', label: 'Certificados & Declarações', icon: Award, roles: ['Administrador', 'Secretário'], group: 'Área Académica' },
     { id: 'transfers', label: 'Transferências de Alunos', icon: Award, roles: ['Administrador', 'Secretário'], group: 'Área Académica' },
@@ -2870,15 +2875,15 @@ export default function App() {
               <div className="flex items-center gap-3 group">
                 <div>
                   <h2 className="text-xl font-bold text-neutral-900 tracking-tight">
-                    {viewConfigs[activeView].title}
+                    {viewConfigs[activeView]?.title || 'Configurações Pedagógicas'}
                   </h2>
                   <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider">
-                    {viewConfigs[activeView].subtitle}
+                    {viewConfigs[activeView]?.subtitle || 'Critérios de avaliação e resultados escolares'}
                   </p>
                 </div>
                 <button 
                   onClick={() => {
-                    setTempHeader(viewConfigs[activeView]);
+                    setTempHeader(viewConfigs[activeView] || { title: 'Configurações Pedagógicas', subtitle: 'Critérios de avaliação e resultados escolares' });
                     setIsEditingHeader(true);
                   }}
                   className="p-2 text-neutral-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl opacity-0 group-hover:opacity-100 transition-all"
@@ -3458,11 +3463,11 @@ export default function App() {
               )}
               {activeView === 'pedagogical-criteria' && (
                 <PedagogicalCriteriaView
-                  classes={filteredClasses}
-                  students={filteredStudents}
+                  classes={classes.length > 0 ? classes : filteredClasses}
+                  students={students.length > 0 ? students : filteredStudents}
                   grades={grades}
                   schoolSettings={schoolSettings}
-                  currentSchoolId={selectedSchoolId || currentUser?.schoolId || 's1'}
+                  currentSchoolId={currentSchoolId !== 'all' ? currentSchoolId : (currentUser?.schoolId || schools[0]?.id || 's1')}
                   currentUser={currentUser}
                   showToast={showToast}
                 />
@@ -5789,6 +5794,7 @@ function DashboardView({
           <div className="flex-1 flex flex-col justify-center space-y-3">
             {[
               { label: 'Nova Matrícula', icon: Plus, action: () => setActiveView('students'), color: 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30', roles: ['Administrador', 'Secretário'] },
+              { label: 'Configurações Pedagógicas', icon: Sliders, action: () => setActiveView('pedagogical-criteria'), color: 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30', roles: ['Super-Administrador', 'Administrador', 'Professor', 'Secretário'] },
               { label: 'Registar Pagamento', icon: CreditCard, action: () => setActiveView('finance'), color: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30', roles: ['Financeiro'] },
               { label: 'Lançar Notas', icon: BookOpen, action: () => setActiveView('academic'), color: 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30', roles: ['Administrador', 'Professor', 'Secretário'] },
               { label: 'Emitir Declaração', icon: FileDown, action: () => setActiveView('certificates'), color: 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30', roles: ['Administrador', 'Secretário'] },
