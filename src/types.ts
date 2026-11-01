@@ -62,10 +62,11 @@ export type Subject = {
 export type Grade = {
   studentId: string;
   subjectId: string;
-  period: '1º Trimestre' | '2º Trimestre' | '3º Trimestre' | 'Exame';
-  type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame';
+  period: '1º Trimestre' | '2º Trimestre' | '3º Trimestre' | 'Exame' | 'Recurso';
+  type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame' | 'REC';
   value: number;
   notaExame?: number;
+  notaRecurso?: number;
   schoolId?: string;
 };
 
@@ -179,4 +180,92 @@ export interface SchoolSettings {
   insigniaUrl?: string;
   carimboUrl?: string;
 }
+
+export type PedagogicalCriteria = {
+  id: string;
+  schoolId: string;
+  subsystem: 'Ensino Geral' | 'Ensino Secundário Técnico-Profissional' | 'Formação de Professores' | 'Educação de Adultos (EJA)';
+  educationLevel: 'Ensino Primário' | 'Iº Ciclo do Ensino Secundário' | 'IIº Ciclo do Ensino Secundário' | 'Ensino Técnico-Profissional' | 'Educação de Adultos (EJA)';
+  levelOrClass: string;
+  course?: string;
+  academicYear: string;
+  evaluationPeriod: 'Anual / Final' | '1º Trimestre' | '2º Trimestre' | '3º Trimestre' | 'Exames';
+  curriculumPlan: string;
+  
+  // 1. Critérios de Aprovação
+  approval: {
+    minGeneralAverage: number;
+    minSubjectGrade: number;
+    maxDeficienciesAllowed: number;
+    directApprovalConditions: string;
+    examApprovalConditions: string;
+    recursoApprovalConditions: string;
+    roundingRule: 'matematico' | 'truncatura' | 'teto';
+    minAttendancePercentage: number;
+    maxUnjustifiedAbsences: number;
+  };
+
+  // 2. Critérios de Reprovação
+  reprobation: {
+    belowMinAverageReprobes: boolean;
+    maxNegativeSubjectsToReprove: number;
+    criticalSubjects: string[];
+    examFailConditions: string;
+    recursoFailConditions: string;
+    failByAbsences: boolean;
+    maxAbsencePercentage: number;
+  };
+
+  // 3. Critérios de Transição
+  transition: {
+    allowsConditionalTransition: boolean;
+    maxDeficienciesForTransition: number;
+    terminalClassesNoTransition: string[];
+    deficiencyResolutionDeadline: string;
+    notes: string;
+  };
+
+  // 4. Critérios de Desistência
+  abandonment: {
+    riskAbsenceCount: number;
+    riskConsecutiveDays: number;
+    confirmedDropAbsenceCount: number;
+    notifyGuardiansOnRisk: boolean;
+    administrativeConfirmationRequired: boolean;
+  };
+
+  // 5. Exames de Recurso
+  recurso: {
+    eligibleClasses: string[];
+    eligibleSubjectsType: 'all' | 'specific';
+    eligibleSubjects: string[];
+    minAccessGrade: number;
+    maxAccessGrade: number;
+    maxSubjectsAllowed: number;
+    finalGradeFormula: 'recurso_direct' | 'ponderada_40_60' | 'media_simples';
+    minPassingGrade: number;
+    definitiveFailConditions: string;
+    startDate: string;
+    endDate: string;
+    registrationDeadline: string;
+  };
+
+  updatedAt: string;
+  updatedBy: string;
+  updatedByEmail: string;
+  version: number;
+};
+
+export type CriteriaHistoryLog = {
+  id: string;
+  schoolId: string;
+  timestamp: string;
+  userName: string;
+  userEmail: string;
+  userRole: string;
+  summary: string;
+  details: string;
+  criteriaSnapshot: PedagogicalCriteria;
+};
+
 

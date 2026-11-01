@@ -42,6 +42,7 @@ export function ExamsView({
 
   const [selectedSubject, setSelectedSubject] = useState<string>(subjects[0] || '');
   const [localExamNotes, setLocalExamNotes] = useState<Record<string, number>>({});
+  const [localRecNotes, setLocalRecNotes] = useState<Record<string, number>>({});
   const [isSaved, setIsSaved] = useState<boolean>(true);
 
   // Sync subject when class changes
@@ -61,31 +62,50 @@ export function ExamsView({
   const threshold = isPrimary ? 5 : 10;
 
   // Helper to fetch grade from props
-  const getGradeValue = (studentId: string, sub: string, period: string, type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => {
+  const getGradeValue = (studentId: string, sub: string, period: string, type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame' | 'REC') => {
     if (type === 'Exame' || period === 'Exame') {
       const g = grades.find(x => x.studentId === studentId && x.subjectId === sub && (x.type === 'Exame' || x.period === 'Exame'));
       if (g) return g.value;
       const gWithNota = grades.find(x => x.studentId === studentId && x.subjectId === sub && x.notaExame !== undefined);
       if (gWithNota && gWithNota.notaExame !== undefined) return gWithNota.notaExame;
     }
+    if (type === 'REC' || period === 'Recurso') {
+      const g = grades.find(x => x.studentId === studentId && x.subjectId === sub && (x.type === 'REC' || x.period === 'Recurso'));
+      if (g) return g.value;
+      const gWithNota = grades.find(x => x.studentId === studentId && x.subjectId === sub && x.notaRecurso !== undefined);
+      if (gWithNota && gWithNota.notaRecurso !== undefined) return gWithNota.notaRecurso;
+    }
     const found = grades.find(x => x.studentId === studentId && x.subjectId === sub && x.period === period && x.type === type);
     return found ? found.value : 0;
   };
 
-  // Populate localExamNotes when selection or grades change
+  // Populate localExamNotes and localRecNotes when selection or grades change
   useEffect(() => {
     const initialNotes: Record<string, number> = {};
+    const initialRecNotes: Record<string, number> = {};
     classStudents.forEach(st => {
       const g = getGradeValue(st.id, selectedSubject, 'Exame', 'Exame');
       initialNotes[st.id] = g || 0;
+      const r = getGradeValue(st.id, selectedSubject, 'Recurso', 'REC');
+      initialRecNotes[st.id] = r || 0;
     });
     setLocalExamNotes(initialNotes);
+    setLocalRecNotes(initialRecNotes);
     setIsSaved(true);
   }, [selectedClassId, selectedSubject, grades]);
 
   const handleNoteChange = (studentId: string, val: number) => {
     const clamped = Math.min(maxScale, Math.max(0, val));
     setLocalExamNotes(prev => ({
+      ...prev,
+      [studentId]: clamped
+    }));
+    setIsSaved(false);
+  };
+
+  const handleRecNoteChange = (studentId: string, val: number) => {
+    const clamped = Math.min(maxScale, Math.max(0, val));
+    setLocalRecNotes(prev => ({
       ...prev,
       [studentId]: clamped
     }));
@@ -120,11 +140,22 @@ export function ExamsView({
         notaExame: note,
         schoolId: selectedClass?.schoolId
       });
+
+      const recNote = localRecNotes[st.id] ?? 0;
+      newGradeEntries.push({
+        studentId: st.id,
+        subjectId: selectedSubject,
+        period: 'Recurso',
+        type: 'REC',
+        value: recNote,
+        notaRecurso: recNote,
+        schoolId: selectedClass?.schoolId
+      });
     });
 
     onUpdateGrades(newGradeEntries);
     setIsSaved(true);
-    notify('Notas de exame guardadas e sincronizadas com sucesso!', 'success');
+    notify('Notas de exame e recurso guardadas com sucesso!', 'success');
   };
 
   const handleExportExcel = () => {
@@ -135,9 +166,11 @@ export function ExamsView({
       const mt2 = calculateMT(st.id, selectedSubject, '2º Trimestre', getGradeValue, selectedClass.level);
       const mt3 = calculateMT(st.id, selectedSubject, '3º Trimestre', getGradeValue, selectedClass.level);
       const examGrade = localExamNotes[st.id] ?? 0;
+      const recGrade = localRecNotes[st.id] ?? 0;
       const getLocalOrCurrent = (sId: string, sub: string, p: string, t?: any) => {
-        if (sId === st.id && sub === selectedSubject && (p === 'Exame' || t === 'Exame')) {
-          return examGrade;
+        if (sId === st.id && sub === selectedSubject) {
+          if (p === 'Exame' || t === 'Exame') return examGrade;
+          if (p === 'Recurso' || t === 'REC') return recGrade;
         }
         return getGradeValue(sId, sub, p, t || 'MAC');
       };
@@ -155,6 +188,7 @@ export function ExamsView({
         'MT3 (CAP)': formatGrade(mt3),
         'Nota de Exame': examGrade > 0 ? formatGrade(examGrade) : '-',
         'Média Final (MFD)': formatGrade(mfd),
+        'Nota de Recurso (REC)': recGrade > 0 ? formatGrade(recGrade) : '-',
         'Resultado': isApproved ? 'Aprovado' : 'Reprovado'
       };
     });
@@ -170,6 +204,10 @@ export function ExamsView({
   const examSum = classStudents.reduce((acc, st) => acc + (localExamNotes[st.id] ?? 0), 0);
   const examAvg = evaluatedCount > 0 ? formatGrade(examSum / evaluatedCount) : '0';
 
+  const recursoEvaluatedCount = classStudents.filter(st => (localRecNotes[st.id] ?? 0) > 0).length;
+  const recursoSum = classStudents.reduce((acc, st) => acc + (localRecNotes[st.id] ?? 0), 0);
+  const recursoAvg = recursoEvaluatedCount > 0 ? formatGrade(recursoSum / recursoEvaluatedCount) : '0';
+
   return (
     <div className="space-y-8">
       {/* Top Controls */}
@@ -184,7 +222,7 @@ export function ExamsView({
             >
               {availableClasses.map((c, i) => (
                 <option key={`${c.id}-${i}`} value={c.id}>
-                  {c.name} {isExamClass(c.level) ? '⭐ (Exame)' : ''}
+                  {c.name} {isExamClass(c.level) ? '⭐ (Exame/Recurso)' : ''}
                 </option>
               ))}
             </select>
@@ -239,13 +277,13 @@ export function ExamsView({
             }`}
           >
             <Save size={18} />
-            {isSaved ? 'Notas Guardadas' : 'Guardar Notas de Exame'}
+            {isSaved ? 'Notas Guardadas' : 'Guardar Exames & Recursos'}
           </button>
         </div>
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-3xl border border-neutral-200 shadow-sm flex items-center gap-4">
           <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center font-black">
             <BookOpen size={24} />
@@ -263,6 +301,16 @@ export function ExamsView({
           <div>
             <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Exames Lançados</p>
             <h4 className="text-2xl font-black text-neutral-900">{evaluatedCount} de {classStudents.length}</h4>
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-3xl border border-neutral-200 shadow-sm flex items-center gap-4">
+          <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center font-black">
+            <CheckCircle size={24} />
+          </div>
+          <div>
+            <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Recursos Lançados</p>
+            <h4 className="text-2xl font-black text-neutral-900">{recursoEvaluatedCount} de {classStudents.length}</h4>
           </div>
         </div>
 
@@ -291,19 +339,19 @@ export function ExamsView({
       <div className="bg-white rounded-[40px] border border-neutral-200 shadow-sm overflow-hidden p-6 sm:p-10">
         <div className="border-b border-neutral-100 bg-neutral-50/40 rounded-3xl p-6 mb-8 text-center space-y-2">
           <h2 className="text-2xl sm:text-3xl font-black text-neutral-900 uppercase tracking-tight">
-            Pauta de Exames Nacionais: {selectedSubject}
+            Pauta de Exames Nacionais e Recursos (REC): {selectedSubject}
           </h2>
           <div className="flex flex-wrap items-center justify-center gap-3 text-xs font-bold text-neutral-500 uppercase tracking-widest">
             <span>Turma: {selectedClass?.name}</span>
             <span className="w-1 h-1 bg-neutral-300 rounded-full" />
             <span>Nível: {selectedClass?.level}</span>
             <span className="w-1 h-1 bg-neutral-300 rounded-full" />
-            <span>Fórmula: MFD = (0.6 × MT3/CAP) + (0.4 × Exame)</span>
+            <span>Fórmula: MFD = (0.6 × MT3/CAP) + (0.4 × Exame) [ou Recurso]</span>
           </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[700px]">
+          <table className="w-full text-left border-collapse min-w-[850px]">
             <thead>
               <tr className="bg-neutral-50 border-b border-neutral-200">
                 <th className="px-4 py-4 text-center text-xs font-black text-neutral-500 uppercase">Nº</th>
@@ -313,6 +361,7 @@ export function ExamsView({
                 <th className="px-3 py-4 text-center text-xs font-black text-neutral-600 uppercase bg-neutral-100/50">MT3 (CAP)</th>
                 <th className="px-4 py-4 text-center text-xs font-black text-amber-800 uppercase bg-amber-100/50">Nota de Exame</th>
                 <th className="px-4 py-4 text-center text-xs font-black text-emerald-800 uppercase bg-emerald-100/50">Média Final (MFD)</th>
+                <th className="px-4 py-4 text-center text-xs font-black text-blue-800 uppercase bg-blue-100/50">Recurso (REC)</th>
                 <th className="px-4 py-4 text-center text-xs font-black text-neutral-600 uppercase">Resultado</th>
               </tr>
             </thead>
@@ -322,10 +371,12 @@ export function ExamsView({
                 const mt2 = calculateMT(student.id, selectedSubject, '2º Trimestre', getGradeValue, selectedClass?.level);
                 const mt3 = calculateMT(student.id, selectedSubject, '3º Trimestre', getGradeValue, selectedClass?.level);
                 const examVal = localExamNotes[student.id] ?? 0;
+                const recVal = localRecNotes[student.id] ?? 0;
 
                 const getLocalOrCurrent = (sId: string, sub: string, p: string, t?: any) => {
-                  if (sId === student.id && sub === selectedSubject && (p === 'Exame' || t === 'Exame')) {
-                    return examVal;
+                  if (sId === student.id && sub === selectedSubject) {
+                    if (p === 'Exame' || t === 'Exame') return examVal;
+                    if (p === 'Recurso' || t === 'REC') return recVal;
                   }
                   return getGradeValue(sId, sub, p, t || 'MAC');
                 };
@@ -369,6 +420,22 @@ export function ExamsView({
                       <span className={`text-base font-black ${isApproved ? 'text-emerald-950 font-black' : 'text-rose-600 font-black'}`}>
                         {formatGrade(mfd)}
                       </span>
+                    </td>
+                    <td className="px-4 py-4 text-center bg-blue-50/30">
+                      <input 
+                        type="number"
+                        min="0"
+                        max={maxScale}
+                        step="0.1"
+                        value={recVal === 0 ? '' : recVal}
+                        placeholder="0.0"
+                        onChange={e => handleRecNoteChange(student.id, Number(e.target.value))}
+                        className={`w-20 p-2 text-center font-black text-base rounded-xl border outline-none transition-all shadow-sm ${
+                          recVal >= threshold 
+                            ? 'bg-white border-blue-300 text-blue-950 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500' 
+                            : 'bg-rose-50/50 border-rose-300 text-rose-700 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500'
+                        }`}
+                      />
                     </td>
                     <td className="px-4 py-4 text-center">
                       <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-md ${

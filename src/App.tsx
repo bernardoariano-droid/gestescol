@@ -57,7 +57,8 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
-  Copy
+  Copy,
+  Sliders
 } from 'lucide-react';
 import { SchoolsView } from './SchoolsView';
 import { ProfileView } from './ProfileView';
@@ -67,7 +68,7 @@ import { ExamsView } from './ExamsView';
 import { TransfersView } from './TransfersView';
 import { CalendarView } from './CalendarView';
 import { ArchiveView } from './ArchiveView';
-import { AiAssistantView } from './AiAssistantView';
+import { PedagogicalCriteriaView } from './PedagogicalCriteriaView';
 import { PaymentModal } from './PaymentModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -101,7 +102,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-type View = 'dashboard' | 'ai-assistant' | 'students' | 'academic' | 'finance' | 'teachers' | 'classes' | 'lists' | 'mini-pautas' | 'pauta-final' | 'boletim' | 'certificates' | 'settings' | 'users' | 'backup' | 'schools' | 'profile' | 'announcements' | 'calendar' | 'archive' | 'exams' | 'transfers' | 'audit';
+type View = 'dashboard' | 'students' | 'academic' | 'finance' | 'teachers' | 'classes' | 'lists' | 'mini-pautas' | 'pauta-final' | 'boletim' | 'certificates' | 'settings' | 'users' | 'backup' | 'schools' | 'profile' | 'announcements' | 'calendar' | 'archive' | 'exams' | 'transfers' | 'audit' | 'pedagogical-criteria';
 
 const LEVELS = ['Todos', 'Iniciação', '1ª Classe', '2ª Classe', '3ª Classe', '4ª Classe', '5ª Classe', '6ª Classe', '7ª Classe', '8ª Classe', '9ª Classe', '10ª Classe', '11ª Classe', '12ª Classe', 'Etapa 1', 'Etapa 2', 'Etapa 3', 'Módulo 1', 'Módulo 2', 'Módulo 3', 'EJA'];
 
@@ -264,8 +265,13 @@ export const calculateAnnual = (studentId: string, subjectId: string, getGradeFu
   
   let val = 0;
   if (isExamClass(level)) {
-    const en = getGradeFunc(studentId, subjectId, 'Exame', 'Exame') || getGradeFunc(studentId, subjectId, 'Exame', 'NPT');
-    if (en > 0) {
+    const en = getGradeFunc(studentId, subjectId, 'Exame', 'Exame') || getGradeFunc(studentId, subjectId, 'Exame', 'NPT') || 0;
+    const rec = getGradeFunc(studentId, subjectId, 'Recurso', 'REC') || getGradeFunc(studentId, subjectId, 'Recurso', 'Exame') || getGradeFunc(studentId, subjectId, 'Exame', 'REC') || 0;
+    
+    // Para as classes de exame (6ª, 9ª e 12ª), se o aluno tiver realizado Exame de Recurso (REC), a nota é considerada
+    if (rec > 0) {
+      val = rec;
+    } else if (en > 0) {
       val = (0.6 * mt3) + (0.4 * en);
     } else {
       val = mt3;
@@ -286,7 +292,7 @@ const getGradeScale = (level: string) => {
 export const generateUnifiedClassPautasPDF = (
   selectedClass: Class,
   classStudents: Student[],
-  getGradeFunc: (sId: string, subId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => number,
+  getGradeFunc: (sId: string, subId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame' | 'REC') => number,
   schoolSettings: SchoolSettings,
   showToast?: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void
 ) => {
@@ -773,7 +779,7 @@ export const generateUnifiedClassPautasPDF = (
 export const generateConsolidatedPautaPDF = (
   selectedClass: Class,
   classStudents: Student[],
-  getGradeFunc: (sId: string, subId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => number,
+  getGradeFunc: (sId: string, subId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame' | 'REC') => number,
   schoolSettings: SchoolSettings,
   showToast?: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void
 ) => {
@@ -854,7 +860,16 @@ export const generateConsolidatedPautaPDF = (
       return sum / subjects.length;
     };
 
-    const totalCols = 2 + (subjects.length * (isExam ? 5 : 4)) + (isExam ? 6 : 5);
+    const getRecursoAvg = (studentId: string) => {
+      if (subjects.length === 0) return 0;
+      const sum = subjects.reduce((acc, sub) => {
+        const rec = getGradeFunc(studentId, sub, 'Recurso', 'REC') || getGradeFunc(studentId, sub, 'Recurso', 'Exame') || getGradeFunc(studentId, sub, 'Exame', 'REC') || 0;
+        return acc + rec;
+      }, 0);
+      return sum / subjects.length;
+    };
+
+    const totalCols = 2 + (subjects.length * (isExam ? 6 : 4)) + (isExam ? 7 : 5);
     const tblFontSize = totalCols > 45 ? 5.0 : totalCols > 32 ? 5.5 : 6.5;
     const tblPadding = totalCols > 45 ? 0.3 : totalCols > 32 ? 0.4 : 0.6;
     const studentNameWidth = totalCols > 45 ? 26 : totalCols > 32 ? 32 : 38;
@@ -864,12 +879,12 @@ export const generateConsolidatedPautaPDF = (
       { content: 'Nome Completo do Aluno', rowSpan: 2, styles: { halign: 'left', valign: 'middle', fontStyle: 'bold' } },
       ...subjects.map(s => ({
         content: s.toUpperCase(),
-        colSpan: isExam ? 5 : 4,
+        colSpan: isExam ? 6 : 4,
         styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [30, 41, 59], textColor: [255, 255, 255] }
       })),
       {
         content: 'RESUMO GERAL',
-        colSpan: isExam ? 6 : 5,
+        colSpan: isExam ? 7 : 5,
         styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [6, 78, 59], textColor: [255, 255, 255] }
       }
     ];
@@ -879,14 +894,24 @@ export const generateConsolidatedPautaPDF = (
         { content: 'MT1', styles: { halign: 'center', fontStyle: 'bold' } },
         { content: 'MT2', styles: { halign: 'center', fontStyle: 'bold' } },
         { content: 'MT3', styles: { halign: 'center', fontStyle: 'bold' } },
-        ...(isExam ? [{ content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }] : []),
-        { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [15, 23, 42] } }
+        ...(isExam ? [
+          { content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }
+        ] : []),
+        { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [15, 23, 42] } },
+        ...(isExam ? [
+          { content: 'REC', styles: { halign: 'center', fontStyle: 'bold', fillColor: [219, 234, 254], textColor: [30, 64, 175] } }
+        ] : [])
       ]),
       { content: 'MT1', styles: { halign: 'center', fontStyle: 'bold' } },
       { content: 'MT2', styles: { halign: 'center', fontStyle: 'bold' } },
       { content: 'MT3', styles: { halign: 'center', fontStyle: 'bold' } },
-      ...(isExam ? [{ content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }] : []),
+      ...(isExam ? [
+        { content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }
+      ] : []),
       { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [209, 250, 229], textColor: [6, 78, 59] } },
+      ...(isExam ? [
+        { content: 'REC', styles: { halign: 'center', fontStyle: 'bold', fillColor: [219, 234, 254], textColor: [30, 64, 175] } }
+      ] : []),
       { content: 'Estado', styles: { halign: 'center', fontStyle: 'bold' } }
     ];
 
@@ -910,6 +935,10 @@ export const generateConsolidatedPautaPDF = (
           row.push(examGrade > 0 ? formatGrade(examGrade) : '-');
         }
         row.push(formatGrade(mfd));
+        if (isExam) {
+          const recGrade = getGradeFunc(student.id, sub, 'Recurso', 'REC') || getGradeFunc(student.id, sub, 'Recurso', 'Exame') || getGradeFunc(student.id, sub, 'Exame', 'REC') || 0;
+          row.push(recGrade > 0 ? formatGrade(recGrade) : '-');
+        }
       });
 
       const mt1Global = getTrimesterAvg(student.id, '1º Trimestre');
@@ -927,6 +956,10 @@ export const generateConsolidatedPautaPDF = (
         row.push(examGlobal > 0 ? formatGrade(examGlobal) : '-');
       }
       row.push(formatGrade(mfdGlobal));
+      if (isExam) {
+        const recGlobal = getRecursoAvg(student.id);
+        row.push(recGlobal > 0 ? formatGrade(recGlobal) : '-');
+      }
 
       let estadoStr = 'Apto';
       if (student.enrollmentStatus === 'Desistente') estadoStr = 'Desistente';
@@ -1796,7 +1829,16 @@ export default function App() {
     setIsEditingHeader(false);
   }, [activeView]);
 
-  const getGrade = useCallback((studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame' = 'MAC') => {
+  const getGrade = useCallback((studentId: string, subjectId: string, period: string, type: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame' | 'REC' = 'MAC') => {
+    if (type === 'REC' || period === 'Recurso') {
+      const recGrade = grades.find(g => 
+        g.studentId === studentId && 
+        g.subjectId === subjectId && 
+        (g.type === 'REC' || g.period === 'Recurso' || (g.notaRecurso !== undefined && g.notaRecurso !== null))
+      );
+      if (recGrade) return recGrade.value || recGrade.notaRecurso || 0;
+    }
+
     if (type === 'Exame' || period === 'Exame') {
       const examGrade = grades.find(g => 
         g.studentId === studentId && 
@@ -2595,7 +2637,7 @@ export default function App() {
     { id: 'exams', label: 'Exames', icon: BookOpen, roles: ['Administrador', 'Secretário', 'Professor'], group: 'Área Académica' },
     { id: 'mini-pautas', label: 'Mini Pautas', icon: FileSpreadsheet, roles: ['Administrador', 'Professor', 'Secretário'], group: 'Área Académica' },
     { id: 'pauta-final', label: 'Pautas Finais', icon: GraduationCap, roles: ['Administrador', 'Professor', 'Secretário'], group: 'Área Académica' },
-    { id: 'ai-assistant', label: 'Assistente Pedagógico', icon: Bot, roles: ['Super-Administrador', 'Administrador', 'Professor', 'Secretário'], group: 'Área Académica' },
+    { id: 'pedagogical-criteria', label: 'Configurações Pedagógicas', icon: Sliders, roles: ['Super-Administrador', 'Administrador', 'Professor'], group: 'Área Académica' },
     { id: 'boletim', label: 'Boletim de Notas', icon: FileDown, roles: ['Administrador', 'Professor', 'Secretário', 'Aluno'], group: 'Área Académica' },
     { id: 'certificates', label: 'Certificados & Declarações', icon: Award, roles: ['Administrador', 'Secretário'], group: 'Área Académica' },
     { id: 'transfers', label: 'Transferências de Alunos', icon: Award, roles: ['Administrador', 'Secretário'], group: 'Área Académica' },
@@ -3186,9 +3228,6 @@ export default function App() {
                   schoolSettings={schoolSettings}
                 />
               )}
-              {activeView === 'ai-assistant' && (
-                <AiAssistantView currentUser={currentUser} />
-              )}
               {activeView === 'teachers' && (
                 <TeachersView 
                   teachers={filteredTeachers} 
@@ -3416,6 +3455,17 @@ export default function App() {
               )}
               {activeView === 'transfers' && (
                 <TransfersView students={filteredStudents} />
+              )}
+              {activeView === 'pedagogical-criteria' && (
+                <PedagogicalCriteriaView
+                  classes={filteredClasses}
+                  students={filteredStudents}
+                  grades={grades}
+                  schoolSettings={schoolSettings}
+                  currentSchoolId={selectedSchoolId || currentUser?.schoolId || 's1'}
+                  currentUser={currentUser}
+                  showToast={showToast}
+                />
               )}
             </motion.div>
           </AnimatePresence>
@@ -5740,7 +5790,6 @@ function DashboardView({
             {[
               { label: 'Nova Matrícula', icon: Plus, action: () => setActiveView('students'), color: 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30', roles: ['Administrador', 'Secretário'] },
               { label: 'Registar Pagamento', icon: CreditCard, action: () => setActiveView('finance'), color: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30', roles: ['Financeiro'] },
-              { label: 'Assistente Pedagógico', icon: Bot, action: () => setActiveView('ai-assistant'), color: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30', roles: ['Super-Administrador', 'Administrador', 'Professor', 'Secretário'] },
               { label: 'Lançar Notas', icon: BookOpen, action: () => setActiveView('academic'), color: 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30', roles: ['Administrador', 'Professor', 'Secretário'] },
               { label: 'Emitir Declaração', icon: FileDown, action: () => setActiveView('certificates'), color: 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30', roles: ['Administrador', 'Secretário'] },
               { label: 'Auditoria de Acesso', icon: History, action: () => setActiveView('audit'), color: 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30', roles: ['Super-Administrador'] },
@@ -10471,7 +10520,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
   students: Student[],
   grades: Grade[],
   onUpdateGrades: (newGrades: Grade[]) => void,
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame' | 'REC') => number,
   schoolSettings: SchoolSettings,
   setSchoolSettings: (s: SchoolSettings) => void,
   currentUser: any,
@@ -10521,7 +10570,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
   const handleStartEditing = () => {
     const currentGrades = [...grades];
     classStudents.forEach(student => {
-      (['AC1', 'AC2', 'AC3', 'MAC', 'NPT', 'Exame'] as const).forEach(type => {
+      (['AC1', 'AC2', 'AC3', 'MAC', 'NPT', 'Exame', 'REC'] as const).forEach(type => {
         const exists = currentGrades.find(g => g.studentId === student.id && g.subjectId === selectedSubject && g.period === selectedPeriod && g.type === type);
         if (!exists) {
           currentGrades.push({
@@ -10529,7 +10578,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
             subjectId: selectedSubject,
             period: selectedPeriod as any,
             type,
-            value: getGrade(student.id, selectedSubject, selectedPeriod, type)
+            value: getGrade(student.id, selectedSubject, selectedPeriod, type as any)
           });
         }
       });
@@ -10543,7 +10592,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
     setIsEditing(false);
   };
 
-  const updateLocalGrade = (studentId: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT' | 'Exame', value: number) => {
+  const updateLocalGrade = (studentId: string, type: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT' | 'Exame' | 'REC', value: number) => {
     const scale = selectedClass ? getGradeScale(selectedClass.level).max : 20;
     const clampedValue = Math.min(scale, Math.max(0, value));
     setLocalGrades(prev => {
@@ -10552,6 +10601,11 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
           if (type === 'Exame' || selectedPeriod === 'Exame') {
             if (g.type === 'Exame' || g.period === 'Exame') {
               return { ...g, value: clampedValue, notaExame: clampedValue };
+            }
+          }
+          if (type === 'REC' || selectedPeriod === 'Recurso') {
+            if (g.type === 'REC' || g.period === 'Recurso') {
+              return { ...g, value: clampedValue, notaRecurso: clampedValue };
             }
           }
           if (g.period === selectedPeriod && g.type === type) {
@@ -10571,6 +10625,21 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
             type: 'Exame',
             value: clampedValue,
             notaExame: clampedValue,
+            schoolId: selectedClass?.schoolId
+          });
+        }
+      }
+
+      if (type === 'REC' || selectedPeriod === 'Recurso') {
+        const hasRec = updated.some(g => g.studentId === studentId && g.subjectId === selectedSubject && g.period === 'Recurso' && g.type === 'REC');
+        if (!hasRec) {
+          updated.push({
+            studentId,
+            subjectId: selectedSubject,
+            period: 'Recurso',
+            type: 'REC',
+            value: clampedValue,
+            notaRecurso: clampedValue,
             schoolId: selectedClass?.schoolId
           });
         }
@@ -10608,6 +10677,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
       const mt2 = getMT(student.id, selectedSubject, '2º Trimestre');
       const mt3 = getMT(student.id, selectedSubject, '3º Trimestre');
       const examGrade = getGrade(student.id, selectedSubject, 'Exame', 'Exame') || getGrade(student.id, selectedSubject, 'Exame', 'NPT') || 0;
+      const recGrade = getGrade(student.id, selectedSubject, 'Recurso', 'REC') || getGrade(student.id, selectedSubject, 'Recurso', 'Exame') || getGrade(student.id, selectedSubject, 'Exame', 'REC') || 0;
       const annual = calculateAnnual(student.id, selectedSubject, getGrade, selectedClass?.level);
       
       const row: any = {
@@ -10621,6 +10691,9 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
         row['Nota de Exame'] = examGrade > 0 ? examGrade.toFixed(1) : '-';
       }
       row['Média Final'] = annual.toFixed(1);
+      if (isExam) {
+        row['Nota de Recurso (REC)'] = recGrade > 0 ? recGrade.toFixed(1) : '-';
+      }
       row['Resultado'] = annual >= getGradeScale(selectedClass?.level || '').threshold ? 'Aprovado' : 'Reprovado';
       return row;
     });
@@ -10638,7 +10711,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
           <div className="space-y-1">
             <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Turma</p>
             <select 
-              value={selectedClassId}
+              value={selectedClassId} 
               onChange={(e) => { setSelectedClassId(e.target.value); setSelectedSubject(''); }}
               className="bg-transparent font-black text-neutral-900 outline-none appearance-none cursor-pointer"
             >
@@ -10649,7 +10722,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
           <div className="space-y-1">
             <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Disciplina</p>
             <select 
-              value={selectedSubject}
+              value={selectedSubject} 
               onChange={(e) => setSelectedSubject(e.target.value)}
               className="bg-transparent font-black text-neutral-900 outline-none appearance-none cursor-pointer"
             >
@@ -10686,14 +10759,19 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
               <div className="space-y-1">
                 <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Período</p>
                 <select 
-                  value={selectedPeriod}
+                  value={selectedPeriod} 
                   onChange={(e) => setSelectedPeriod(e.target.value)}
                   className="bg-transparent font-black text-neutral-900 outline-none appearance-none cursor-pointer"
                 >
                   <option value="1º Trimestre">1º Trimestre</option>
                   <option value="2º Trimestre">2º Trimestre</option>
                   <option value="3º Trimestre">3º Trimestre</option>
-                  {isExamClass(selectedClass?.level) && <option value="Exame">Exame Nacional</option>}
+                  {isExamClass(selectedClass?.level) && (
+                    <>
+                      <option value="Exame">Exame Nacional</option>
+                      <option value="Recurso">Exame de Recurso (REC)</option>
+                    </>
+                  )}
                 </select>
               </div>
             </>
@@ -10787,7 +10865,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                 <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 ">Nome do Aluno</th>
                 {viewMode === 'entry' ? (
                   <>
-                    {!(isExamClass(selectedClass?.level) && selectedPeriod === 'Exame') && (
+                    {!(isExamClass(selectedClass?.level) && (selectedPeriod === 'Exame' || selectedPeriod === 'Recurso')) && (
                       <>
                         <th className="px-3 py-3 sm:px-4 sm:py-4 print:px-1 print:py-1 text-center font-bold text-neutral-500">AC1</th>
                         <th className="px-3 py-3 sm:px-4 sm:py-4 print:px-1 print:py-1 text-center font-bold text-neutral-500">AC2</th>
@@ -10804,7 +10882,17 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                         <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-emerald-700 bg-emerald-50/60">Média Final (MFD)</th>
                       </>
                     )}
-                    {selectedPeriod !== 'Exame' && (
+                    {selectedPeriod === 'Recurso' && (
+                      <>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-500">MT1</th>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-500">MT2</th>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-500">MT3 (CAP)</th>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-amber-700 bg-amber-50/60">Nota Exame</th>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-emerald-700 bg-emerald-50/60">Média Final (MFD)</th>
+                        <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-blue-700 bg-blue-50/60">Nota Recurso (REC)</th>
+                      </>
+                    )}
+                    {selectedPeriod !== 'Exame' && selectedPeriod !== 'Recurso' && (
                       <>
                         {isExamClass(selectedClass?.level) && selectedPeriod === '3º Trimestre' ? (
                           <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-amber-700 bg-amber-50/50">Nota de Exame</th>
@@ -10826,6 +10914,9 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                       <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-amber-700 bg-amber-50/50">Nota de Exame</th>
                     )}
                     <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-emerald-700 bg-emerald-50/50">Média Final</th>
+                    {isExamClass(selectedClass?.level) && (
+                      <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-blue-700 bg-blue-50/50">Recurso (REC)</th>
+                    )}
                     <th className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-black text-neutral-900">Resultado</th>
                   </>
                 )}
@@ -10834,8 +10925,8 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
             <tbody className="divide-y divide-neutral-50">
               {classStudents.map((student, index) => {
                 if (viewMode === 'entry') {
-                  const getLocalOrGrade = (s: string, sub: string, p: string, t: 'AC1' | 'AC2' | 'AC3' | 'MAC' | 'NPT' | 'Exame') => isEditing 
-                    ? localGrades.find(g => g.studentId === s && g.subjectId === sub && (g.period === p || (p === 'Exame' && (g.period === 'Exame' || g.type === 'Exame'))) && g.type === t)?.value ?? getGrade(s, sub, p, t)
+                  const getLocalOrGrade = (s: string, sub: string, p: string, t: any) => isEditing 
+                    ? localGrades.find(g => g.studentId === s && g.subjectId === sub && (g.period === p || (p === 'Exame' && (g.period === 'Exame' || g.type === 'Exame')) || (p === 'Recurso' && (g.period === 'Recurso' || g.type === 'REC'))) && g.type === t)?.value ?? getGrade(s, sub, p, t)
                     : getGrade(s, sub, p, t);
                   
                   const ac1 = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'AC1');
@@ -10844,6 +10935,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                   const mac = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'MAC');
                   const npt = getLocalOrGrade(student.id, selectedSubject, selectedPeriod, 'NPT');
                   const exame = getLocalOrGrade(student.id, selectedSubject, 'Exame', 'Exame') || getLocalOrGrade(student.id, selectedSubject, 'Exame', 'NPT');
+                  const recurso = getLocalOrGrade(student.id, selectedSubject, 'Recurso', 'REC') || getLocalOrGrade(student.id, selectedSubject, 'Recurso', 'Exame') || getLocalOrGrade(student.id, selectedSubject, 'Exame', 'REC');
 
                   const exam = isExamClass(selectedClass?.level);
                   const { max: maxScale, threshold } = getGradeScale(selectedClass?.level || '');
@@ -10891,6 +10983,58 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                           <span className={cn("text-sm font-black", mfd >= threshold ? "text-emerald-950" : "text-rose-600")}>
                             {formatGrade(mfd)}
                           </span>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  if (selectedPeriod === 'Recurso') {
+                    const mt1 = calculateMT(student.id, selectedSubject, '1º Trimestre', getLocalOrGrade, selectedClass?.level);
+                    const mt2 = calculateMT(student.id, selectedSubject, '2º Trimestre', getLocalOrGrade, selectedClass?.level);
+                    const mt3 = calculateMT(student.id, selectedSubject, '3º Trimestre', getLocalOrGrade, selectedClass?.level);
+                    const mfd = calculateAnnual(student.id, selectedSubject, getLocalOrGrade, selectedClass?.level);
+
+                    return (
+                      <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors group">
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center font-bold text-neutral-400">{index + 1}</td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2">
+                          <p className="text-sm font-black text-neutral-900">{student.name}</p>
+                          <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-tighter">{student.bi}</p>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                          <span className={cn(mt1 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{formatGrade(mt1)}</span>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                          <span className={cn(mt2 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{formatGrade(mt2)}</span>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
+                          <span className={cn(mt3 >= threshold ? "text-neutral-900" : "text-rose-600 font-bold")}>{formatGrade(mt3)}</span>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-amber-50/20">
+                          <span className={cn("text-sm font-black", exame >= threshold ? "text-amber-950" : "text-rose-600")}>
+                            {exame > 0 ? formatGrade(exame) : '-'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-emerald-50/20">
+                          <span className={cn("text-sm font-black", mfd >= threshold ? "text-emerald-950" : "text-rose-600")}>
+                            {formatGrade(mfd)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-blue-50/20">
+                          {isEditing ? (
+                            <input 
+                              type="number" 
+                              min="0" max={maxScale} step="0.1"
+                              value={recurso}
+                              onChange={(e) => updateLocalGrade(student.id, 'REC', Number(e.target.value))}
+                              className={cn("w-16 p-2 bg-white border border-blue-300 rounded-xl text-center font-black text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500", recurso >= threshold ? "text-blue-950 font-black" : "text-rose-600 font-black")}
+                              title="Nota de Exame de Recurso (REC)"
+                            />
+                          ) : (
+                            <span className={cn("text-sm font-black", recurso >= threshold ? "text-blue-950" : "text-rose-600")}>
+                              {recurso > 0 ? formatGrade(recurso) : '-'}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -11004,6 +11148,7 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                   const mt2 = getMT(student.id, selectedSubject, '2º Trimestre');
                   const mt3 = getMT(student.id, selectedSubject, '3º Trimestre');
                   const examGrade = getGrade(student.id, selectedSubject, 'Exame', 'Exame') || getGrade(student.id, selectedSubject, 'Exame', 'NPT') || 0;
+                  const recGrade = getGrade(student.id, selectedSubject, 'Recurso', 'REC') || getGrade(student.id, selectedSubject, 'Recurso', 'Exame') || getGrade(student.id, selectedSubject, 'Exame', 'REC') || 0;
                   const annual = calculateAnnual(student.id, selectedSubject, getGrade, selectedClass?.level);
                   const isExam = isExamClass(selectedClass?.level);
                   const { threshold } = getGradeScale(selectedClass?.level || '');
@@ -11038,6 +11183,13 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
                           isApproved ? "text-emerald-950 font-black" : "text-rose-600 font-black"
                         )}>{formatGrade(annual)}</span>
                       </td>
+                      {isExam && (
+                        <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center bg-blue-50/20 font-bold">
+                          <span className={recGrade >= threshold ? "text-blue-950 font-black" : "text-rose-600 font-black"}>
+                            {recGrade > 0 ? formatGrade(recGrade) : '-'}
+                          </span>
+                        </td>
+                      )}
                       <td className="px-4 py-3 sm:px-6 sm:py-4 print:px-2 print:py-2 text-center">
                         <span className={cn(
                           "text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md",
@@ -11087,7 +11239,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   classes: Class[], 
   students: Student[],
   grades: Grade[],
-  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame') => number,
+  getGrade: (studentId: string, subjectId: string, period: string, type?: 'MAC' | 'NPT' | 'AC1' | 'AC2' | 'AC3' | 'Exame' | 'REC') => number,
   schoolSettings: SchoolSettings,
   setSchoolSettings: (s: SchoolSettings) => void,
   onIssueCertificate: (studentId: string, bulkIds?: string[]) => void,
@@ -11114,6 +11266,10 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
     return getGrade(studentId, subjectId, 'Exame', 'Exame') || getGrade(studentId, subjectId, 'Exame', 'NPT') || 0;
   };
 
+  const getSubjectRecurso = (studentId: string, subjectId: string) => {
+    return getGrade(studentId, subjectId, 'Recurso', 'REC') || getGrade(studentId, subjectId, 'Recurso', 'Exame') || getGrade(studentId, subjectId, 'Exame', 'REC') || 0;
+  };
+
   const getSubjectMFD = (studentId: string, subjectId: string) => {
     return calculateAnnual(studentId, subjectId, getGrade, selectedClass?.level);
   };
@@ -11127,6 +11283,12 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   const getExamAvg = (studentId: string) => {
     if (subjects.length === 0) return 0;
     const sum = subjects.reduce((acc, subject) => acc + getSubjectExam(studentId, subject), 0);
+    return sum / subjects.length;
+  };
+
+  const getRecursoAvg = (studentId: string) => {
+    if (subjects.length === 0) return 0;
+    const sum = subjects.reduce((acc, subject) => acc + getSubjectRecurso(studentId, subject), 0);
     return sum / subjects.length;
   };
 
@@ -11159,6 +11321,10 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
           row[`${subject} - Exame`] = ex > 0 ? ex.toFixed(1) : '-';
         }
         row[`${subject} - MFD`] = mfd.toFixed(1);
+        if (isExam) {
+          const rec = getSubjectRecurso(student.id, subject);
+          row[`${subject} - REC`] = rec > 0 ? rec.toFixed(1) : '-';
+        }
       });
       
       const mt1 = getTrimesterAvg(student.id, '1º Trimestre');
@@ -11173,6 +11339,9 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
         row['Média Total Exame'] = getExamAvg(student.id).toFixed(1);
       }
       row['Média Final (MFD)'] = mfdTotal.toFixed(1);
+      if (isExam) {
+        row['Média Total REC'] = getRecursoAvg(student.id).toFixed(1);
+      }
       row['Estado'] = getEstado(student, mfdTotal);
       
       return row;
@@ -11228,7 +11397,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
               }
             }}
             className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3.5 rounded-2xl font-black flex items-center justify-center gap-2.5 transition-all active:scale-95 shadow-md shadow-emerald-200"
-            title="Exportar Pauta Geral Consolidada em PDF (Matriz com MT1, MT2, MT3, Nota de Exame e MFD por Disciplina)"
+            title="Exportar Pauta Geral Consolidada em PDF (Matriz com MT1, MT2, MT3, Nota de Exame, REC e MFD por Disciplina)"
           >
             <FileDown size={20} />
             Pauta Consolidada (PDF)
@@ -11287,9 +11456,9 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
               <tr className="bg-neutral-50/50 border-b border-neutral-100">
                 <th rowSpan={2} className="px-6 py-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest sticky left-0 bg-neutral-50/50 z-20 border-r border-neutral-100">Aluno</th>
                 {subjects.map((s, i) => (
-                  <th key={`${s}-${i}`} colSpan={isExam ? 5 : 4} className="px-4 py-3 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-r border-neutral-100">{s}</th>
+                  <th key={`${s}-${i}`} colSpan={isExam ? 6 : 4} className="px-4 py-3 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-r border-neutral-100">{s}</th>
                 ))}
-                <th colSpan={isExam ? 6 : 5} className="px-6 py-3 text-[10px] font-black text-emerald-700 uppercase tracking-widest text-center bg-emerald-50/50 border-b border-neutral-100">Resumo Final</th>
+                <th colSpan={isExam ? 7 : 5} className="px-6 py-3 text-[10px] font-black text-emerald-700 uppercase tracking-widest text-center bg-emerald-50/50 border-b border-neutral-100">Resumo Final</th>
                 <th rowSpan={2} className="px-6 py-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-neutral-100">Acção</th>
               </tr>
               <tr className="bg-neutral-50/30 border-b border-neutral-100">
@@ -11302,6 +11471,9 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                       <th className="px-2 py-3 text-[9px] font-black text-amber-700 text-center border-r border-neutral-100 bg-amber-50/50">Exame</th>
                     )}
                     <th className="px-2 py-3 text-[9px] font-black text-neutral-900 text-center border-r border-neutral-100 bg-neutral-100/30">MFD</th>
+                    {isExam && (
+                      <th className="px-2 py-3 text-[9px] font-black text-blue-700 text-center border-r border-neutral-100 bg-blue-50/50">REC</th>
+                    )}
                   </React.Fragment>
                 ))}
                 <th className="px-4 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT1</th>
@@ -11311,6 +11483,9 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                   <th className="px-4 py-3 text-[9px] font-black text-amber-700 text-center border-r border-neutral-100 bg-amber-50/50">Exame</th>
                 )}
                 <th className="px-4 py-3 text-[9px] font-black text-emerald-700 text-center border-r border-neutral-100 bg-emerald-100/20">MFD</th>
+                {isExam && (
+                  <th className="px-4 py-3 text-[9px] font-black text-blue-700 text-center border-r border-neutral-100 bg-blue-50/50">REC</th>
+                )}
                 <th className="px-6 py-3 text-[9px] font-black text-neutral-900 text-center">Estado</th>
               </tr>
             </thead>
@@ -11320,6 +11495,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                 const mt2_global = getTrimesterAvg(student.id, '2º Trimestre');
                 const mt3_global = getTrimesterAvg(student.id, '3º Trimestre');
                 const exam_global = getExamAvg(student.id);
+                const rec_global = getRecursoAvg(student.id);
                 const mfd_global = getStudentMFDTotal(student.id);
                 const estado = getEstado(student, mfd_global);
                 const { threshold } = getGradeScale(selectedClass?.level || '');
@@ -11334,6 +11510,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                       const s2 = getSubjectMT(student.id, subject, '2º Trimestre');
                       const s3 = getSubjectMT(student.id, subject, '3º Trimestre');
                       const sexam = getSubjectExam(student.id, subject);
+                      const srec = getSubjectRecurso(student.id, subject);
                       const smfd = calculateAnnual(student.id, subject, getGrade, selectedClass?.level);
                       return (
                         <React.Fragment key={`${student.id}-${subject}-${i}`}>
@@ -11356,6 +11533,13 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                           <td className="px-2 py-4 text-center text-[10px] font-black bg-neutral-50/30 border-r border-neutral-50">
                             <span className={smfd >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(smfd)}</span>
                           </td>
+                          {isExam && (
+                            <td className="px-2 py-4 text-center text-[10px] font-black bg-blue-50/30 border-r border-neutral-50">
+                              <span className={srec >= threshold ? "text-blue-950 font-black" : "text-rose-600 font-black"}>
+                                {srec > 0 ? formatGrade(srec) : '-'}
+                              </span>
+                            </td>
+                          )}
                         </React.Fragment>
                       );
                     })}
@@ -11381,6 +11565,13 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                         mfd_global >= threshold ? "text-neutral-900" : "text-rose-600"
                       )}>{formatGrade(mfd_global)}</span>
                     </td>
+                    {isExam && (
+                      <td className="px-4 py-4 text-center text-[10px] font-black bg-blue-50/30 border-r border-neutral-50">
+                        <span className={rec_global >= threshold ? "text-blue-950 font-black" : "text-rose-600 font-black"}>
+                          {rec_global > 0 ? formatGrade(rec_global) : '-'}
+                        </span>
+                      </td>
+                    )}
                     <td className="px-6 py-4 text-center">
                       <span className={cn(
                         "text-[9px] font-black uppercase tracking-tighter px-2 py-1 rounded-md inline-block min-w-[60px]",
