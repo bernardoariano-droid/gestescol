@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { X, Plus, Trash2, Printer } from 'lucide-react';
 import { Student, Class, Payment } from './types';
-import { MONTHS } from './constants';
+import { MONTHS, ANGOLA_INSIGNIA_URL, ANGOLA_INSIGNIA_FALLBACK } from './constants';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -29,24 +29,45 @@ const loadAngolaInsignia = (customLogo?: string): Promise<string | null> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.src = 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Coat_of_arms_of_Angola.svg/200px-Coat_of_arms_of_Angola.svg.png';
+    img.src = ANGOLA_INSIGNIA_URL;
     img.onload = () => {
       try {
         const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
+        canvas.width = img.naturalWidth || img.width || 300;
+        canvas.height = img.naturalHeight || img.height || 300;
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0);
           resolve(canvas.toDataURL('image/png'));
         } else {
-          resolve(null);
+          resolve(ANGOLA_INSIGNIA_URL);
         }
       } catch (e) {
-        resolve(null);
+        resolve(ANGOLA_INSIGNIA_URL);
       }
     };
-    img.onerror = () => resolve(null);
+    img.onerror = () => {
+      const fallbackImg = new Image();
+      fallbackImg.crossOrigin = 'anonymous';
+      fallbackImg.src = ANGOLA_INSIGNIA_FALLBACK;
+      fallbackImg.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = fallbackImg.naturalWidth || fallbackImg.width || 300;
+          canvas.height = fallbackImg.naturalHeight || fallbackImg.height || 300;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(fallbackImg, 0, 0);
+            resolve(canvas.toDataURL('image/png'));
+          } else {
+            resolve(ANGOLA_INSIGNIA_FALLBACK);
+          }
+        } catch {
+          resolve(ANGOLA_INSIGNIA_FALLBACK);
+        }
+      };
+      fallbackImg.onerror = () => resolve(null);
+    };
   });
 };
 

@@ -1,5 +1,8 @@
 import { Student, Class, Teacher, Payment, SystemUser, Expense, School } from './types';
 
+export const ANGOLA_INSIGNIA_URL = '/assets/emblem_of_angola.png';
+export const ANGOLA_INSIGNIA_FALLBACK = 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/ff/Emblem_of_Angola.svg/500px-Emblem_of_Angola.svg.png';
+
 export const INITIAL_SCHOOLS: School[] = [
   {
     id: 's1',
