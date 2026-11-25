@@ -469,9 +469,23 @@ export const generateUnifiedClassPautasPDF = async (
 
     doc.text("O Subdirector Pedagógico", 14 + sigWidth + sigWidth / 2, coverFinalY, { align: "center" });
     doc.line(14 + sigWidth + 10, coverFinalY + 10, 14 + sigWidth * 2 - 10, coverFinalY + 10);
+    if (schoolSettings.subdirectorName) {
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(schoolSettings.subdirectorName.toUpperCase(), 14 + sigWidth + sigWidth / 2, coverFinalY + 14.5, { align: "center" });
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+    }
 
     doc.text("O Director Geral", 14 + sigWidth * 2 + sigWidth / 2, coverFinalY, { align: "center" });
     doc.line(14 + sigWidth * 2 + 10, coverFinalY + 10, pageWidth - 14 - 10, coverFinalY + 10);
+    if (schoolSettings.directorName) {
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(schoolSettings.directorName.toUpperCase(), 14 + sigWidth * 2 + sigWidth / 2, coverFinalY + 14.5, { align: "center" });
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+    }
 
 
     // --- PAGES FOR EACH SUBJECT ---
@@ -598,29 +612,19 @@ export const generateUnifiedClassPautasPDF = async (
 
       doc.text("O Subdirector Pedagógico", 14 + sigWidth * 2 + sigWidth / 2, sigY, { align: "center" });
       doc.line(14 + sigWidth * 2 + 10, sigY + 10, pageWidth - 14 - 10, sigY + 10);
+      if (schoolSettings.subdirectorName) {
+        doc.setFontSize(7.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text(schoolSettings.subdirectorName.toUpperCase(), 14 + sigWidth * 2 + sigWidth / 2, sigY + 14.5, { align: "center" });
+      }
     });
 
     // --- FINAL CONSOLIDATED PAUTA ---
     doc.addPage();
     drawOfficialHeader(doc, "PAUTA GERAL CONSOLIDADA DA TURMA", isExamClass(selectedClass.level) ? "Matriz Global com MT1, MT2, MT3, Nota de Exame e MFD por Disciplina" : "Matriz Global com MT1, MT2, MT3 e MFD por Disciplina");
 
-    const getTrimesterAvg = (studentId: string, period: string) => {
-      if (subjects.length === 0) return 0;
-      const sum = subjects.reduce((acc, sub) => acc + calculateMT(studentId, sub, period, getGradeFunc, selectedClass.level), 0);
-      return sum / subjects.length;
-    };
-
-    const getExamAvg = (studentId: string) => {
-      if (subjects.length === 0) return 0;
-      const sum = subjects.reduce((acc, sub) => {
-        const ex = getGradeFunc(studentId, sub, 'Exame', 'Exame') || getGradeFunc(studentId, sub, 'Exame', 'NPT') || 0;
-        return acc + ex;
-      }, 0);
-      return sum / subjects.length;
-    };
-
     const isExamConsolidated = isExamClass(selectedClass.level);
-    const totalCols = 2 + (subjects.length * (isExamConsolidated ? 5 : 4)) + (isExamConsolidated ? 6 : 5);
+    const totalCols = 2 + (subjects.length * (isExamConsolidated ? 5 : 4)) + 1;
     const tblFontSize = totalCols > 45 ? 5.0 : totalCols > 32 ? 5.5 : 6.5;
     const tblPadding = totalCols > 45 ? 0.3 : totalCols > 32 ? 0.4 : 0.6;
     const studentNameWidth = totalCols > 45 ? 26 : totalCols > 32 ? 32 : 38;
@@ -634,11 +638,7 @@ export const generateUnifiedClassPautasPDF = async (
         colSpan: isExamConsolidated ? 5 : 4,
         styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [30, 41, 59], textColor: [255, 255, 255] }
       })),
-      {
-        content: 'RESUMO GERAL',
-        colSpan: isExamConsolidated ? 6 : 5,
-        styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [6, 78, 59], textColor: [255, 255, 255] }
-      }
+      { content: 'Estado', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [30, 41, 59], textColor: [255, 255, 255] } }
     ];
 
     // Header Row 2: Under each subject: MT1, MT2, MT3, (Exame se 6ª/9ª/12ª), MFD
@@ -649,14 +649,7 @@ export const generateUnifiedClassPautasPDF = async (
         { content: 'MT3', styles: { halign: 'center', fontStyle: 'bold' } },
         ...(isExamConsolidated ? [{ content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }] : []),
         { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [15, 23, 42] } }
-      ]),
-      // Under Resumo Geral:
-      { content: 'MT1', styles: { halign: 'center', fontStyle: 'bold' } },
-      { content: 'MT2', styles: { halign: 'center', fontStyle: 'bold' } },
-      { content: 'MT3', styles: { halign: 'center', fontStyle: 'bold' } },
-      ...(isExamConsolidated ? [{ content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }] : []),
-      { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [209, 250, 229], textColor: [6, 78, 59] } },
-      { content: 'Estado', styles: { halign: 'center', fontStyle: 'bold' } }
+      ])
     ];
 
     const consolidatedRows = classStudents.map((student, idx) => {
@@ -665,12 +658,15 @@ export const generateUnifiedClassPautasPDF = async (
         student.name
       ];
 
+      let sumMfd = 0;
+
       // Values for each subject
       subjects.forEach(sub => {
         const mt1 = calculateMT(student.id, sub, '1º Trimestre', getGradeFunc, selectedClass.level);
         const mt2 = calculateMT(student.id, sub, '2º Trimestre', getGradeFunc, selectedClass.level);
         const mt3 = calculateMT(student.id, sub, '3º Trimestre', getGradeFunc, selectedClass.level);
         const mfd = calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level);
+        sumMfd += mfd;
 
         row.push(formatGrade(mt1));
         row.push(formatGrade(mt2));
@@ -682,23 +678,7 @@ export const generateUnifiedClassPautasPDF = async (
         row.push(formatGrade(mfd));
       });
 
-      // Values for Resumo Geral
-      const mt1Global = getTrimesterAvg(student.id, '1º Trimestre');
-      const mt2Global = getTrimesterAvg(student.id, '2º Trimestre');
-      const mt3Global = getTrimesterAvg(student.id, '3º Trimestre');
-      const mfdGlobal = subjects.length > 0 
-        ? subjects.reduce((acc, sub) => acc + calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level), 0) / subjects.length 
-        : (mt1Global + mt2Global + mt3Global) / 3;
-
-      row.push(formatGrade(mt1Global));
-      row.push(formatGrade(mt2Global));
-      row.push(formatGrade(mt3Global));
-      if (isExamConsolidated) {
-        const examGlobal = getExamAvg(student.id);
-        row.push(examGlobal > 0 ? formatGrade(examGlobal) : '-');
-      }
-      row.push(formatGrade(mfdGlobal));
-
+      const mfdGlobal = subjects.length > 0 ? sumMfd / subjects.length : 0;
       let estadoStr = 'Apto';
       if (student.enrollmentStatus === 'Desistente') estadoStr = 'Desistente';
       else if (mfdGlobal < threshold) estadoStr = 'N/Apto';
@@ -767,9 +747,23 @@ export const generateUnifiedClassPautasPDF = async (
 
     doc.text("O Subdirector Pedagógico", 14 + sigWidth + sigWidth / 2, cFinalY, { align: "center" });
     doc.line(14 + sigWidth + 10, cFinalY + 10, 14 + sigWidth * 2 - 10, cFinalY + 10);
+    if (schoolSettings.subdirectorName) {
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(schoolSettings.subdirectorName.toUpperCase(), 14 + sigWidth + sigWidth / 2, cFinalY + 14.5, { align: "center" });
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+    }
 
     doc.text("O Director Geral da Escola", 14 + sigWidth * 2 + sigWidth / 2, cFinalY, { align: "center" });
     doc.line(14 + sigWidth * 2 + 10, cFinalY + 10, pageWidth - 14 - 10, cFinalY + 10);
+    if (schoolSettings.directorName) {
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(schoolSettings.directorName.toUpperCase(), 14 + sigWidth * 2 + sigWidth / 2, cFinalY + 14.5, { align: "center" });
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+    }
 
     // Page numbering footer
     const totalPages = doc.getNumberOfPages();
@@ -866,31 +860,7 @@ export const generateConsolidatedPautaPDF = async (
     doc.setLineWidth(0.2);
     doc.line(8, 40, pageWidth - 8, 40);
 
-    const getTrimesterAvg = (studentId: string, period: string) => {
-      if (subjects.length === 0) return 0;
-      const sum = subjects.reduce((acc, sub) => acc + calculateMT(studentId, sub, period, getGradeFunc, selectedClass.level), 0);
-      return sum / subjects.length;
-    };
-
-    const getExamAvg = (studentId: string) => {
-      if (subjects.length === 0) return 0;
-      const sum = subjects.reduce((acc, sub) => {
-        const ex = getGradeFunc(studentId, sub, 'Exame', 'Exame') || getGradeFunc(studentId, sub, 'Exame', 'NPT') || 0;
-        return acc + ex;
-      }, 0);
-      return sum / subjects.length;
-    };
-
-    const getRecursoAvg = (studentId: string) => {
-      if (subjects.length === 0) return 0;
-      const sum = subjects.reduce((acc, sub) => {
-        const rec = getGradeFunc(studentId, sub, 'Recurso', 'REC') || getGradeFunc(studentId, sub, 'Recurso', 'Exame') || getGradeFunc(studentId, sub, 'Exame', 'REC') || 0;
-        return acc + rec;
-      }, 0);
-      return sum / subjects.length;
-    };
-
-    const totalCols = 2 + (subjects.length * (isExam ? 6 : 4)) + (isExam ? 7 : 5);
+    const totalCols = 2 + (subjects.length * (isExam ? 6 : 4)) + 1;
     const tblFontSize = totalCols > 45 ? 5.0 : totalCols > 32 ? 5.5 : 6.5;
     const tblPadding = totalCols > 45 ? 0.3 : totalCols > 32 ? 0.4 : 0.6;
     const studentNameWidth = totalCols > 45 ? 26 : totalCols > 32 ? 32 : 38;
@@ -903,11 +873,7 @@ export const generateConsolidatedPautaPDF = async (
         colSpan: isExam ? 6 : 4,
         styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [30, 41, 59], textColor: [255, 255, 255] }
       })),
-      {
-        content: 'RESUMO GERAL',
-        colSpan: isExam ? 7 : 5,
-        styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [6, 78, 59], textColor: [255, 255, 255] }
-      }
+      { content: 'Estado', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontStyle: 'bold', fillColor: [30, 41, 59], textColor: [255, 255, 255] } }
     ];
 
     const headRow2: any[] = [
@@ -922,18 +888,7 @@ export const generateConsolidatedPautaPDF = async (
         ...(isExam ? [
           { content: 'REC', styles: { halign: 'center', fontStyle: 'bold', fillColor: [219, 234, 254], textColor: [30, 64, 175] } }
         ] : [])
-      ]),
-      { content: 'MT1', styles: { halign: 'center', fontStyle: 'bold' } },
-      { content: 'MT2', styles: { halign: 'center', fontStyle: 'bold' } },
-      { content: 'MT3', styles: { halign: 'center', fontStyle: 'bold' } },
-      ...(isExam ? [
-        { content: 'Exame', styles: { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], textColor: [120, 53, 15] } }
-      ] : []),
-      { content: 'MFD', styles: { halign: 'center', fontStyle: 'bold', fillColor: [209, 250, 229], textColor: [6, 78, 59] } },
-      ...(isExam ? [
-        { content: 'REC', styles: { halign: 'center', fontStyle: 'bold', fillColor: [219, 234, 254], textColor: [30, 64, 175] } }
-      ] : []),
-      { content: 'Estado', styles: { halign: 'center', fontStyle: 'bold' } }
+      ])
     ];
 
     const consolidatedRows = classStudents.map((student, idx) => {
@@ -942,11 +897,14 @@ export const generateConsolidatedPautaPDF = async (
         student.name
       ];
 
+      let sumMfd = 0;
+
       subjects.forEach(sub => {
         const mt1 = calculateMT(student.id, sub, '1º Trimestre', getGradeFunc, selectedClass.level);
         const mt2 = calculateMT(student.id, sub, '2º Trimestre', getGradeFunc, selectedClass.level);
         const mt3 = calculateMT(student.id, sub, '3º Trimestre', getGradeFunc, selectedClass.level);
         const mfd = calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level);
+        sumMfd += mfd;
 
         row.push(formatGrade(mt1));
         row.push(formatGrade(mt2));
@@ -962,26 +920,7 @@ export const generateConsolidatedPautaPDF = async (
         }
       });
 
-      const mt1Global = getTrimesterAvg(student.id, '1º Trimestre');
-      const mt2Global = getTrimesterAvg(student.id, '2º Trimestre');
-      const mt3Global = getTrimesterAvg(student.id, '3º Trimestre');
-      const mfdGlobal = subjects.length > 0 
-        ? subjects.reduce((acc, sub) => acc + calculateAnnual(student.id, sub, getGradeFunc, selectedClass.level), 0) / subjects.length 
-        : (mt1Global + mt2Global + mt3Global) / 3;
-
-      row.push(formatGrade(mt1Global));
-      row.push(formatGrade(mt2Global));
-      row.push(formatGrade(mt3Global));
-      if (isExam) {
-        const examGlobal = getExamAvg(student.id);
-        row.push(examGlobal > 0 ? formatGrade(examGlobal) : '-');
-      }
-      row.push(formatGrade(mfdGlobal));
-      if (isExam) {
-        const recGlobal = getRecursoAvg(student.id);
-        row.push(recGlobal > 0 ? formatGrade(recGlobal) : '-');
-      }
-
+      const mfdGlobal = subjects.length > 0 ? sumMfd / subjects.length : 0;
       let estadoStr = 'Apto';
       if (student.enrollmentStatus === 'Desistente') estadoStr = 'Desistente';
       else if (mfdGlobal < threshold) estadoStr = 'N/Apto';
@@ -1052,9 +991,23 @@ export const generateConsolidatedPautaPDF = async (
 
     doc.text("O Subdirector Pedagógico", 8 + sigWidth + sigWidth / 2, cFinalY, { align: "center" });
     doc.line(8 + sigWidth + 10, cFinalY + 10, 8 + sigWidth * 2 - 10, cFinalY + 10);
+    if (schoolSettings.subdirectorName) {
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(schoolSettings.subdirectorName.toUpperCase(), 8 + sigWidth + sigWidth / 2, cFinalY + 14.5, { align: "center" });
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+    }
 
     doc.text("O Director Geral da Escola", 8 + sigWidth * 2 + sigWidth / 2, cFinalY, { align: "center" });
     doc.line(8 + sigWidth * 2 + 10, cFinalY + 10, pageWidth - 8 - 10, cFinalY + 10);
+    if (schoolSettings.directorName) {
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(schoolSettings.directorName.toUpperCase(), 8 + sigWidth * 2 + sigWidth / 2, cFinalY + 14.5, { align: "center" });
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+    }
 
     const totalPages = doc.getNumberOfPages();
     for (let i = 1; i <= totalPages; i++) {
@@ -1911,7 +1864,9 @@ export default function App() {
       administracaoMunicipal: 'Administração Municipal do Waku-Kungo',
       direccaoMunicipal: 'Direcção Municipal da Educação',
       nomeEscola: 'Escola Primária',
-      anoLectivo: '2023/2024'
+      anoLectivo: '2023/2024',
+      directorName: '',
+      subdirectorName: ''
     };
   });
 
@@ -1939,6 +1894,8 @@ export default function App() {
         direccaoMunicipal: currentSchool.direccaoMunicipal || 'Direcção Municipal da Educação',
         nomeEscola: currentSchool.name,
         anoLectivo: currentSchool.anoLectivo || '2023/2024',
+        directorName: currentSchool.directorName || '',
+        subdirectorName: currentSchool.subdirectorName || '',
         logoBase64: currentSchool.logoBase64 || prev.logoBase64
       }));
     }
@@ -2213,7 +2170,7 @@ export default function App() {
     const pageHeight = paperSize === 'A3' ? 420 : paperSize === 'A5' ? 210 : 297;
     
     let sigY = finalY + 10;
-    const requiredHeight = paperSize === 'A3' ? 45 : paperSize === 'A5' ? 25 : 35;
+    const requiredHeight = paperSize === 'A3' ? 50 : paperSize === 'A5' ? 28 : 40;
     
     if (sigY + requiredHeight > pageHeight - margin) {
       doc.addPage();
@@ -2231,15 +2188,17 @@ export default function App() {
     const colWidth = (paperWidth - (margin * 2)) / 3;
     const sigLabelY = sigY + (paperSize === 'A3' ? 12 : paperSize === 'A5' ? 8 : 10);
     const lineY = sigLabelY + (paperSize === 'A3' ? 18 : paperSize === 'A5' ? 10 : 14);
-    const descY = lineY + (paperSize === 'A3' ? 5 : paperSize === 'A5' ? 3 : 4);
+    const nameOffset = paperSize === 'A3' ? 5 : paperSize === 'A5' ? 3.5 : 4.5;
+    const descOffset = paperSize === 'A3' ? 4.5 : paperSize === 'A5' ? 3 : 4;
     
     const sigLabelFontSize = paperSize === 'A3' ? 11 : paperSize === 'A5' ? 7 : 9;
+    const sigNameFontSize = paperSize === 'A3' ? 10 : paperSize === 'A5' ? 6.5 : 8;
     const sigDescFontSize = paperSize === 'A3' ? 9 : paperSize === 'A5' ? 5.5 : 7.5;
     
     const sigs = [
-      { label: "O Professor", desc: "(Assinatura legível)" },
-      { label: "O Subdirector Pedagógico", desc: "(Assinatura legível)" },
-      { label: "O Director da Escola", desc: "(Assinatura legível)" }
+      { label: "O Professor", name: '', desc: "(Assinatura legível)" },
+      { label: "O Subdirector Pedagógico", name: schoolSettings.subdirectorName || '', desc: "(Assinatura legível)" },
+      { label: "O Director da Escola", name: schoolSettings.directorName || '', desc: "(Assinatura legível)" }
     ];
     
     sigs.forEach((sig, index) => {
@@ -2248,6 +2207,7 @@ export default function App() {
       // Label
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(sigLabelFontSize);
+      doc.setTextColor(15, 23, 42);
       doc.text(sig.label, colCenterX, sigLabelY, { align: 'center' });
       
       // Line
@@ -2256,9 +2216,20 @@ export default function App() {
       const lineText = paperSize === 'A3' ? "________________________________" : paperSize === 'A5' ? "____________________" : "__________________________";
       doc.text(lineText, colCenterX, lineY, { align: 'center' });
       
+      // Name below line
+      let descY = lineY + nameOffset;
+      if (sig.name) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(sigNameFontSize);
+        doc.setTextColor(15, 23, 42);
+        doc.text(sig.name.toUpperCase(), colCenterX, lineY + nameOffset, { align: 'center' });
+        descY = lineY + nameOffset + descOffset;
+      }
+
       // Description
       doc.setFont('helvetica', 'italic');
       doc.setFontSize(sigDescFontSize);
+      doc.setTextColor(100, 116, 139);
       doc.text(sig.desc, colCenterX, descY, { align: 'center' });
     });
 
@@ -3467,8 +3438,9 @@ export default function App() {
                   setSchoolSettings={(newSettings) => {
                     setSchoolSettings(newSettings);
                     localStorage.setItem('edugest_school_settings', JSON.stringify(newSettings));
-                    if (currentSchoolId) {
-                      const updatedSchools = schools.map(s => s.id === currentSchoolId ? {
+                    if (currentSchool) {
+                      const targetId = currentSchool.id;
+                      const updatedSchools = schools.map(s => s.id === targetId ? {
                         ...s,
                         name: newSettings.nomeEscola,
                         republica: newSettings.republica,
@@ -3476,13 +3448,15 @@ export default function App() {
                         administracaoMunicipal: newSettings.administracaoMunicipal,
                         direccaoMunicipal: newSettings.direccaoMunicipal,
                         anoLectivo: newSettings.anoLectivo,
+                        directorName: newSettings.directorName,
+                        subdirectorName: newSettings.subdirectorName,
                         logoBase64: newSettings.logoBase64,
                       } : s);
                       setSchools(updatedSchools);
                       localStorage.setItem('edugest_schools', JSON.stringify(updatedSchools));
                       pushItemToSupabaseWithRetry({
                         type: 'ACTUALIZAR_ESCOLA',
-                        data: updatedSchools.find(s => s.id === currentSchoolId)
+                        data: updatedSchools.find(s => s.id === targetId)
                       }).catch(e => console.error(e));
                     }
                   }}
@@ -4352,12 +4326,18 @@ function ListsView({ classes, students, selectedClassId, onClassChange, setActiv
               <div className="flex flex-col items-center">
                 <span className={cn("font-black text-neutral-900 uppercase tracking-wider", config.sigTitleSize)}>O Subdirector Pedagógico</span>
                 <div className="w-full max-w-[200px] border-b border-dashed border-neutral-300 mt-12 print:mt-8"></div>
-                <span className="text-neutral-400 mt-2 font-medium">(Assinatura legível)</span>
+                {schoolSettings.subdirectorName && (
+                  <span className="font-bold text-neutral-900 uppercase mt-2 text-xs print:text-[9px]">{schoolSettings.subdirectorName}</span>
+                )}
+                <span className={cn("text-neutral-400 font-medium", schoolSettings.subdirectorName ? "mt-0.5" : "mt-2")}>(Assinatura legível)</span>
               </div>
               <div className="flex flex-col items-center">
                 <span className={cn("font-black text-neutral-900 uppercase tracking-wider", config.sigTitleSize)}>O Director da Escola</span>
                 <div className="w-full max-w-[200px] border-b border-dashed border-neutral-300 mt-12 print:mt-8"></div>
-                <span className="text-neutral-400 mt-2 font-medium">(Assinatura legível)</span>
+                {schoolSettings.directorName && (
+                  <span className="font-bold text-neutral-900 uppercase mt-2 text-xs print:text-[9px]">{schoolSettings.directorName}</span>
+                )}
+                <span className={cn("text-neutral-400 font-medium", schoolSettings.directorName ? "mt-0.5" : "mt-2")}>(Assinatura legível)</span>
               </div>
             </div>
           </div>
@@ -4387,6 +4367,8 @@ interface SchoolSettings {
   direccaoMunicipal: string;
   nomeEscola: string;
   anoLectivo: string;
+  directorName?: string;
+  subdirectorName?: string;
   customLevels?: string[];
   logoBase64?: string;
 }
@@ -4466,6 +4448,10 @@ function OfficialHeader({ settings, setSettings, className, extraInfo }: {
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [localSettings, setLocalSettings] = useState(settings);
+
+  useEffect(() => {
+    setLocalSettings(settings);
+  }, [settings]);
 
   const handleSave = () => {
     if (setSettings) setSettings(localSettings);
@@ -4721,6 +4707,26 @@ function SettingsView({ schoolSettings, setSchoolSettings, showToast }: {
                 type="text"
                 value={localSettings.anoLectivo}
                 onChange={(e) => setLocalSettings({ ...localSettings, anoLectivo: e.target.value })}
+                className="w-full px-5 py-4 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Director da Escola / Director Geral</label>
+              <input 
+                type="text"
+                value={localSettings.directorName || ''}
+                onChange={(e) => setLocalSettings({ ...localSettings, directorName: e.target.value })}
+                placeholder="Nome completo do Director da Escola"
+                className="w-full px-5 py-4 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Subdirector Pedagógico</label>
+              <input 
+                type="text"
+                value={localSettings.subdirectorName || ''}
+                onChange={(e) => setLocalSettings({ ...localSettings, subdirectorName: e.target.value })}
+                placeholder="Nome completo do Subdirector Pedagógico"
                 className="w-full px-5 py-4 bg-neutral-50 border border-neutral-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all"
               />
             </div>
@@ -7803,7 +7809,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
     const margin = 14;
     
     let sigY = finalY + 10;
-    const requiredHeight = 35;
+    const requiredHeight = 40;
     
     if (sigY + requiredHeight > paperHeight - margin) {
       doc.addPage();
@@ -7821,15 +7827,15 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
     const colWidth = (paperWidth - (margin * 2)) / 3;
     const sigLabelY = sigY + 10;
     const lineY = sigLabelY + 14;
-    const descY = lineY + 4;
     
     const sigLabelFontSize = 9;
+    const sigNameFontSize = 8;
     const sigDescFontSize = 7.5;
     
     const sigs = [
-      { label: "O Professor", desc: "(Assinatura legível)" },
-      { label: "O Subdirector Pedagógico", desc: "(Assinatura legível)" },
-      { label: "O Director da Escola", desc: "(Assinatura legível)" }
+      { label: "O Professor", name: '', desc: "(Assinatura legível)" },
+      { label: "O Subdirector Pedagógico", name: schoolSettings.subdirectorName || '', desc: "(Assinatura legível)" },
+      { label: "O Director da Escola", name: schoolSettings.directorName || '', desc: "(Assinatura legível)" }
     ];
     
     sigs.forEach((sig, index) => {
@@ -7838,6 +7844,7 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
       // Label
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(sigLabelFontSize);
+      doc.setTextColor(15, 23, 42);
       doc.text(sig.label, colCenterX, sigLabelY, { align: 'center' });
       
       // Line
@@ -7846,9 +7853,20 @@ function AcademicView({ classes, students, grades, onUpdateGrades, getGrade, tea
       const lineText = "__________________________";
       doc.text(lineText, colCenterX, lineY, { align: 'center' });
       
+      // Name below line
+      let descY = lineY + 4;
+      if (sig.name) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(sigNameFontSize);
+        doc.setTextColor(15, 23, 42);
+        doc.text(sig.name.toUpperCase(), colCenterX, lineY + 4.5, { align: 'center' });
+        descY = lineY + 8.5;
+      }
+
       // Description
       doc.setFont('helvetica', 'italic');
       doc.setFontSize(sigDescFontSize);
+      doc.setTextColor(100, 116, 139);
       doc.text(sig.desc, colCenterX, descY, { align: 'center' });
     });
 
@@ -12028,12 +12046,18 @@ function MiniPautasView({ classes, students, grades, onUpdateGrades, getGrade, s
             <div className="flex flex-col items-center">
               <span className="font-black text-neutral-900 uppercase tracking-wider text-sm print:text-[10px]">O Subdirector Pedagógico</span>
               <div className="w-full max-w-[200px] border-b border-dashed border-neutral-300 mt-12 print:mt-8"></div>
-              <span className="text-neutral-400 mt-2 font-medium">(Assinatura legível)</span>
+              {schoolSettings.subdirectorName && (
+                <span className="font-bold text-neutral-900 uppercase mt-2 text-xs print:text-[9px]">{schoolSettings.subdirectorName}</span>
+              )}
+              <span className={cn("text-neutral-400 font-medium", schoolSettings.subdirectorName ? "mt-0.5" : "mt-2")}>(Assinatura legível)</span>
             </div>
             <div className="flex flex-col items-center">
               <span className="font-black text-neutral-900 uppercase tracking-wider text-sm print:text-[10px]">O Director da Escola</span>
               <div className="w-full max-w-[200px] border-b border-dashed border-neutral-300 mt-12 print:mt-8"></div>
-              <span className="text-neutral-400 mt-2 font-medium">(Assinatura legível)</span>
+              {schoolSettings.directorName && (
+                <span className="font-bold text-neutral-900 uppercase mt-2 text-xs print:text-[9px]">{schoolSettings.directorName}</span>
+              )}
+              <span className={cn("text-neutral-400 font-medium", schoolSettings.directorName ? "mt-0.5" : "mt-2")}>(Assinatura legível)</span>
             </div>
           </div>
         </div>
@@ -12078,11 +12102,6 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   const computedRows = useMemo(() => {
     const subjectCount = subjects.length;
     return classStudents.map((student) => {
-      let sumMt1 = 0;
-      let sumMt2 = 0;
-      let sumMt3 = 0;
-      let sumExam = 0;
-      let sumRec = 0;
       let sumMfd = 0;
 
       const subjectCells = subjects.map((subject) => {
@@ -12093,21 +12112,11 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
         const srec = getGrade(student.id, subject, 'Recurso', 'REC') || getGrade(student.id, subject, 'Recurso', 'Exame') || getGrade(student.id, subject, 'Exame', 'REC') || 0;
         const smfd = calculateAnnual(student.id, subject, getGrade, selectedClass?.level);
 
-        sumMt1 += s1;
-        sumMt2 += s2;
-        sumMt3 += s3;
-        sumExam += sexam;
-        sumRec += srec;
         sumMfd += smfd;
 
         return { subject, s1, s2, s3, sexam, srec, smfd };
       });
 
-      const mt1_global = subjectCount > 0 ? sumMt1 / subjectCount : 0;
-      const mt2_global = subjectCount > 0 ? sumMt2 / subjectCount : 0;
-      const mt3_global = subjectCount > 0 ? sumMt3 / subjectCount : 0;
-      const exam_global = subjectCount > 0 ? sumExam / subjectCount : 0;
-      const rec_global = subjectCount > 0 ? sumRec / subjectCount : 0;
       const mfd_global = subjectCount > 0 ? sumMfd / subjectCount : 0;
 
       const estado = student.enrollmentStatus === 'Desistente'
@@ -12117,12 +12126,6 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
       return {
         student,
         subjectCells,
-        mt1_global,
-        mt2_global,
-        mt3_global,
-        exam_global,
-        rec_global,
-        mfd_global,
         estado
       };
     });
@@ -12131,7 +12134,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
   const handleExportExcel = () => {
     if (!selectedClass) return;
     
-    const data = computedRows.map(({ student, subjectCells, mt1_global, mt2_global, mt3_global, exam_global, rec_global, mfd_global, estado }, index) => {
+    const data = computedRows.map(({ student, subjectCells, estado }, index) => {
       const row: any = {
         'Nº': index + 1,
         'Nome do Aluno': student.name
@@ -12150,16 +12153,6 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
         }
       });
       
-      row['Média Total MT1'] = mt1_global.toFixed(1);
-      row['Média Total MT2'] = mt2_global.toFixed(1);
-      row['Média Total MT3'] = mt3_global.toFixed(1);
-      if (isExam) {
-        row['Média Total Exame'] = exam_global.toFixed(1);
-      }
-      row['Média Final (MFD)'] = mfd_global.toFixed(1);
-      if (isExam) {
-        row['Média Total REC'] = rec_global.toFixed(1);
-      }
       row['Estado'] = estado;
       
       return row;
@@ -12267,7 +12260,7 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                 {subjects.map((s, i) => (
                   <th key={`${s}-${i}`} colSpan={isExam ? 6 : 4} className="px-4 py-3 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-r border-neutral-100">{s}</th>
                 ))}
-                <th colSpan={isExam ? 7 : 5} className="px-6 py-3 text-[10px] font-black text-emerald-700 uppercase tracking-widest text-center bg-emerald-50/50 border-b border-neutral-100">Resumo Final</th>
+                <th rowSpan={2} className="px-6 py-5 text-[10px] font-black text-neutral-900 uppercase tracking-widest text-center border-b border-r border-neutral-100">Estado</th>
                 <th rowSpan={2} className="px-6 py-5 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center border-b border-neutral-100">Acção</th>
               </tr>
               <tr className="bg-neutral-50/30 border-b border-neutral-100">
@@ -12285,21 +12278,10 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                     )}
                   </React.Fragment>
                 ))}
-                <th className="px-4 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT1</th>
-                <th className="px-4 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT2</th>
-                <th className="px-4 py-3 text-[9px] font-black text-neutral-400 text-center border-r border-neutral-100">MT3</th>
-                {isExam && (
-                  <th className="px-4 py-3 text-[9px] font-black text-amber-700 text-center border-r border-neutral-100 bg-amber-50/50">Exame</th>
-                )}
-                <th className="px-4 py-3 text-[9px] font-black text-emerald-700 text-center border-r border-neutral-100 bg-emerald-100/20">MFD</th>
-                {isExam && (
-                  <th className="px-4 py-3 text-[9px] font-black text-blue-700 text-center border-r border-neutral-100 bg-blue-50/50">REC</th>
-                )}
-                <th className="px-6 py-3 text-[9px] font-black text-neutral-900 text-center">Estado</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-50">
-              {computedRows.map(({ student, subjectCells, mt1_global, mt2_global, mt3_global, exam_global, rec_global, mfd_global, estado }) => (
+              {computedRows.map(({ student, subjectCells, estado }) => (
                 <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors group">
                   <td className="px-6 py-4 sticky left-0 bg-white group-hover:bg-neutral-50/50 z-10 border-r border-neutral-100">
                     <p className="text-xs font-black text-neutral-900 truncate max-w-[180px]">{student.name}</p>
@@ -12334,35 +12316,6 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
                       )}
                     </React.Fragment>
                   ))}
-                  <td className="px-4 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                    <span className={mt1_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(mt1_global)}</span>
-                  </td>
-                  <td className="px-4 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                    <span className={mt2_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(mt2_global)}</span>
-                  </td>
-                  <td className="px-4 py-4 text-center text-[10px] font-bold border-r border-neutral-50">
-                    <span className={mt3_global >= threshold ? "text-neutral-900" : "text-rose-600"}>{formatGrade(mt3_global)}</span>
-                  </td>
-                  {isExam && (
-                    <td className="px-4 py-4 text-center text-[10px] font-black bg-amber-50/30 border-r border-neutral-50">
-                      <span className={exam_global >= threshold ? "text-amber-950 font-black" : "text-rose-600 font-black"}>
-                        {exam_global > 0 ? formatGrade(exam_global) : '-'}
-                      </span>
-                    </td>
-                  )}
-                  <td className="px-4 py-4 text-center bg-emerald-50/20 border-r border-neutral-50">
-                    <span className={cn(
-                      "text-xs font-black",
-                      mfd_global >= threshold ? "text-neutral-900" : "text-rose-600"
-                    )}>{formatGrade(mfd_global)}</span>
-                  </td>
-                  {isExam && (
-                    <td className="px-4 py-4 text-center text-[10px] font-black bg-blue-50/30 border-r border-neutral-50">
-                      <span className={rec_global >= threshold ? "text-blue-950 font-black" : "text-rose-600 font-black"}>
-                        {rec_global > 0 ? formatGrade(rec_global) : '-'}
-                      </span>
-                    </td>
-                  )}
                   <td className="px-6 py-4 text-center">
                     <span className={cn(
                       "text-[9px] font-black uppercase tracking-tighter px-2 py-1 rounded-md inline-block min-w-[60px]",
@@ -12407,12 +12360,18 @@ function PautaFinalView({ classes, students, grades, getGrade, schoolSettings, s
             <div className="flex flex-col items-center">
               <span className="font-black text-neutral-900 uppercase tracking-wider text-sm print:text-[10px]">O Subdirector Pedagógico</span>
               <div className="w-full max-w-[200px] border-b border-dashed border-neutral-300 mt-12 print:mt-8"></div>
-              <span className="text-neutral-400 mt-2 font-medium">(Assinatura legível)</span>
+              {schoolSettings.subdirectorName && (
+                <span className="font-bold text-neutral-900 uppercase mt-2 text-xs print:text-[9px]">{schoolSettings.subdirectorName}</span>
+              )}
+              <span className={cn("text-neutral-400 font-medium", schoolSettings.subdirectorName ? "mt-0.5" : "mt-2")}>(Assinatura legível)</span>
             </div>
             <div className="flex flex-col items-center">
               <span className="font-black text-neutral-900 uppercase tracking-wider text-sm print:text-[10px]">O Director da Escola</span>
               <div className="w-full max-w-[200px] border-b border-dashed border-neutral-300 mt-12 print:mt-8"></div>
-              <span className="text-neutral-400 mt-2 font-medium">(Assinatura legível)</span>
+              {schoolSettings.directorName && (
+                <span className="font-bold text-neutral-900 uppercase mt-2 text-xs print:text-[9px]">{schoolSettings.directorName}</span>
+              )}
+              <span className={cn("text-neutral-400 font-medium", schoolSettings.directorName ? "mt-0.5" : "mt-2")}>(Assinatura legível)</span>
             </div>
           </div>
         </div>
@@ -12683,12 +12642,18 @@ function BoletimView({ students, classes, grades, getGrade, schoolSettings, setS
                 <div className="flex flex-col items-center">
                   <span className="font-black text-neutral-900 uppercase tracking-wider text-sm print:text-[10px]">O Subdirector Pedagógico</span>
                   <div className="w-full max-w-[200px] border-b border-dashed border-neutral-300 mt-12 print:mt-8"></div>
-                  <span className="text-neutral-400 mt-2 font-medium">(Assinatura legível)</span>
+                  {schoolSettings.subdirectorName && (
+                    <span className="font-bold text-neutral-900 uppercase mt-2 text-xs print:text-[9px]">{schoolSettings.subdirectorName}</span>
+                  )}
+                  <span className={cn("text-neutral-400 font-medium", schoolSettings.subdirectorName ? "mt-0.5" : "mt-2")}>(Assinatura legível)</span>
                 </div>
                 <div className="flex flex-col items-center">
                   <span className="font-black text-neutral-900 uppercase tracking-wider text-sm print:text-[10px]">O Director da Escola</span>
                   <div className="w-full max-w-[200px] border-b border-dashed border-neutral-300 mt-12 print:mt-8"></div>
-                  <span className="text-neutral-400 mt-2 font-medium">(Assinatura legível)</span>
+                  {schoolSettings.directorName && (
+                    <span className="font-bold text-neutral-900 uppercase mt-2 text-xs print:text-[9px]">{schoolSettings.directorName}</span>
+                  )}
+                  <span className={cn("text-neutral-400 font-medium", schoolSettings.directorName ? "mt-0.5" : "mt-2")}>(Assinatura legível)</span>
                 </div>
               </div>
             </div>
@@ -13126,8 +13091,8 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
   const [sidebarTab, setSidebarTab] = useState<'student' | 'details' | 'grades'>('student');
 
   const [certInfo, setCertInfo] = useState({
-    directorName: 'Matos Enoque António',
-    schoolName: 'Escola Pré-Universitária de Luanda (PUNIV)',
+    directorName: schoolSettings.directorName || 'Matos Enoque António',
+    schoolName: schoolSettings.nomeEscola || 'Escola Pré-Universitária de Luanda (PUNIV)',
     schoolLocation: 'da Ingombota',
     naturalidade: 'Luanda',
     municipio: 'Kilamba Kiaxi',
@@ -13142,7 +13107,7 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
     curso: 'Ciências Físicas e Biológicas',
     resultado: 'Apta',
     dataEmissao: '22 de Abril de 2026',
-    subdirectorName: 'Mariano Quimbulo Baptista',
+    subdirectorName: schoolSettings.subdirectorName || 'Mariano Quimbulo Baptista',
     birthDate: '05 de abril de 1997',
   });
 
@@ -13170,6 +13135,16 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
   };
 
   useEffect(() => {
+    setCertInfo(prev => ({
+      ...prev,
+      directorName: schoolSettings.directorName || prev.directorName,
+      subdirectorName: schoolSettings.subdirectorName || prev.subdirectorName,
+      schoolName: schoolSettings.nomeEscola || prev.schoolName,
+      anoLectivo: schoolSettings.anoLectivo || prev.anoLectivo,
+    }));
+  }, [schoolSettings.directorName, schoolSettings.subdirectorName, schoolSettings.nomeEscola, schoolSettings.anoLectivo]);
+
+  useEffect(() => {
     if (!selectedStudent) return;
     
     // Auto-update student details if available
@@ -13179,6 +13154,9 @@ function CertificateIssuer({ template, students, classes, schoolSettings, onBack
       birthDate: selectedStudent.birthDate || '05 de abril de 1997',
       anoLectivo: schoolSettings.anoLectivo || '2023/2024',
       curso: selectedClass?.course || 'Ciências Físicas e Biológicas',
+      directorName: schoolSettings.directorName || prev.directorName,
+      subdirectorName: schoolSettings.subdirectorName || prev.subdirectorName,
+      schoolName: schoolSettings.nomeEscola || prev.schoolName,
     }));
 
     if (!certGrades[selectedStudent.id]) {

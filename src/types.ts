@@ -177,6 +177,8 @@ export interface SchoolSettings {
   direccaoMunicipal: string;
   nomeEscola: string;
   anoLectivo: string;
+  directorName?: string;
+  subdirectorName?: string;
   insigniaUrl?: string;
   carimboUrl?: string;
 }
